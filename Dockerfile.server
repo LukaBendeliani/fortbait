@@ -10,18 +10,18 @@ COPY packages/shared/package.json ./packages/shared/
 COPY packages/server/package.json ./packages/server/
 COPY packages/client/package.json ./packages/client/
 
-# Install dependencies (including dev deps for build)
+# Install dependencies (including dev deps for tsx)
 RUN npm install
 
 # Copy source code
 COPY . .
 
-# Build sequence: shared -> server
+# Build shared (server will run from source using tsx)
 RUN npm run build -w @game/shared
-RUN npm run build -w @game/server
 
 # Expose the signaling port
 EXPOSE 9208
 
-# Start the server using the compiled output
-CMD ["node", "packages/server/dist/index.js"]
+# Start the server using tsx to run from source
+# This avoids the nested dist folder issues
+CMD ["npx", "tsx", "packages/server/src/index.ts"]
