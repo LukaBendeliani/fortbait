@@ -4,26 +4,24 @@ FROM node:20-slim
 # Set working directory
 WORKDIR /app
 
-# Copy root package files
+# Copy all package files
 COPY package.json package-lock.json tsconfig.base.json ./
-
-# Copy package files for all workspaces
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/server/package.json ./packages/server/
 COPY packages/client/package.json ./packages/client/
 
-# Install dependencies
+# Install dependencies (including dev deps for build)
 RUN npm install
 
 # Copy source code
 COPY . .
 
-# Build shared first, then server
+# Build sequence: shared -> server
 RUN npm run build -w @game/shared
 RUN npm run build -w @game/server
 
 # Expose the signaling port
 EXPOSE 9208
 
-# Start the server
-CMD ["npm", "start", "-w", "@game/server"]
+# Start the server using the compiled output
+CMD ["node", "packages/server/dist/index.js"]
