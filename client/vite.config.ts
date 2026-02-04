@@ -6,15 +6,15 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export default defineConfig({
-  resolve: {
-    alias: {
-      '@game/shared': path.resolve(__dirname, '../shared/src/index.ts')
-    }
-  },
-  server: {
-    port: 3000,
-  },
-  build: {
-    target: 'esnext',
-  },
+    resolve: {
+        alias: {
+            '@shared': path.resolve(__dirname, 'src/shared')
+        }
+    },
+    server: {
+        port: 3000,
+    },
+    build: {
+        target: 'esnext',
+    },
 });
