@@ -17,7 +17,7 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "@game/shared": ["../shared/src/index.ts"]
+      "@game/shared": ["../shared/dist/index.d.ts"]
     },
     "types": ["vite/client"]
   },
