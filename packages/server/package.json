@@ -5,7 +5,7 @@
   "main": "./dist/index.js",
   "scripts": {
     "build": "tsc",
-    "dev": "npm run build -w @game/shared && tsx watch src/index.ts",
+    "dev": "npm run build -w @game/shared && tsx --alias-path src/index.ts",
     "start": "node dist/index.js"
   },
   "dependencies": {
