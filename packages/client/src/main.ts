@@ -1,6 +1,5 @@
 import Phaser from 'phaser';
 import { GameScene } from './scenes/GameScene';
-import { GAME_CONFIG } from '@game/shared';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,

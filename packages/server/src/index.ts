@@ -5,7 +5,6 @@ import {
   PlayerState,
   GameState,
   InputState,
-  WelcomeMessage,
   ZoneState,
   ProjectileState,
   ItemState,
