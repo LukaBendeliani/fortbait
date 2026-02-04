@@ -31,14 +31,16 @@ export class GameScene extends Phaser.Scene {
   private killFeedTexts: Phaser.GameObjects.Text[] = [];
   private zoneGraphics!: Phaser.GameObjects.Graphics;
   private projectileGraphics!: Phaser.GameObjects.Graphics;
+  private itemGraphics!: Phaser.GameObjects.Graphics;
   private itemSprites: Map<string, Phaser.GameObjects.Sprite> = new Map();
   private obstacleSprites: Phaser.GameObjects.Sprite[] = [];
+  private obstacleGraphics!: Phaser.GameObjects.Graphics;
   private minimapCamera!: Phaser.Cameras.Scene2D.Camera;
-
+  
   private bloodEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   private sparksEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   private flashEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
-
+  
   private lastHealth: number = 100;
 
   constructor() {
@@ -46,8 +48,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.spritesheet('characters', '/assets/spritesheet_characters.png', { frameWidth: 44, frameHeight: 44 });
-    this.load.spritesheet('tiles', '/assets/spritesheet_tiles.png', { frameWidth: 64, frameHeight: 64, spacing: 10 });
+    this.load.atlas('characters', '/assets/spritesheet_characters.png', '/assets/spritesheet_characters.xml');
+    this.load.spritesheet('tiles', '/assets/spritesheet_tiles.png', { frameWidth: 64, frameHeight: 64 });
     this.load.image('weapon_pistol', '/assets/weapon_pistol.png');
     this.load.image('weapon_rifle', '/assets/weapon_rifle.png');
     this.load.image('weapon_shotgun', '/assets/weapon_shotgun.png');
@@ -66,12 +68,11 @@ export class GameScene extends Phaser.Scene {
       .setBackgroundColor(0x000000)
       .setAlpha(0.8)
       .setBounds(0, 0, GAME_CONFIG.WORLD_WIDTH, GAME_CONFIG.WORLD_HEIGHT);
-
+    
     this.connectionText = this.add.text(width / 2, height / 2, 'Connecting...', { fontSize: '24px', color: '#4ecdc4' }).setOrigin(0.5).setScrollFactor(0);
     this.inventoryText = this.add.text(10, 10, '', { fontSize: '16px', color: '#ffffff', backgroundColor: '#00000088' }).setDepth(10).setScrollFactor(0);
     this.phaseText = this.add.text(width / 2, 50, '', { fontSize: '32px', color: '#ffffff', stroke: '#000000', strokeThickness: 4 }).setOrigin(0.5).setDepth(10).setScrollFactor(0);
 
-    this.zoneGraphics = this.add.graphics();
     this.projectileGraphics = this.add.graphics();
 
     // Create Ground
@@ -82,11 +83,13 @@ export class GameScene extends Phaser.Scene {
       .setTint(0x999999);
 
     this.obstacleGraphics = this.add.graphics();
+    this.zoneGraphics = this.add.graphics();
+    this.itemGraphics = this.add.graphics();
 
     // Particles
     this.createPixelTexture();
     this.bloodEmitter = this.add.particles(0, 0, 'pixel', {
-      color: [0xff0000, 0x880000],
+      color: [ 0xff0000, 0x880000 ],
       speed: { min: 50, max: 100 },
       scale: { start: 1, end: 0 },
       lifespan: 400,
@@ -94,7 +97,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.sparksEmitter = this.add.particles(0, 0, 'pixel', {
-      color: [0xffff00, 0xffa500],
+      color: [ 0xffff00, 0xffa500 ],
       speed: { min: 80, max: 150 },
       scale: { start: 1, end: 0 },
       lifespan: 300,
@@ -102,7 +105,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.flashEmitter = this.add.particles(0, 0, 'pixel', {
-      color: [0xffffff, 0xffff00],
+      color: [ 0xffffff, 0xffff00 ],
       scale: { start: 2, end: 0 },
       lifespan: 100,
       speed: 20,
@@ -136,12 +139,16 @@ export class GameScene extends Phaser.Scene {
     graphics.destroy();
   }
 
+  init() {
+    this.createPixelTexture();
+  }
+
   private addKillLog(entry: KillLogEntry) {
     const { width } = this.scale;
     const killer = entry.killerId === this.playerId ? 'YOU' : (entry.killerId === 'ZONE' ? 'ZONE' : entry.killerId.slice(0, 4));
     const victim = entry.victimId === this.playerId ? 'YOU' : entry.victimId.slice(0, 4);
     const weapon = entry.weapon.toUpperCase();
-
+    
     const text = this.add.text(width - 170, 170 + this.killFeedTexts.length * 20, `${killer} [${weapon}] ${victim}`, {
       fontSize: '14px',
       color: entry.victimId === this.playerId ? '#ff4d4d' : (entry.killerId === this.playerId ? '#4dff4d' : '#ffffff'),
@@ -178,8 +185,8 @@ export class GameScene extends Phaser.Scene {
       this.sparksEmitter.explode(8, effect.x, effect.y);
     } else if (effect.type === EffectType.MUZZLE_FLASH) {
       this.flashEmitter.explode(5, effect.x, effect.y);
-
-      const shooter = Array.from(this.playerSprites.entries()).find(([id, s]) =>
+      
+      const shooter = Array.from(this.playerSprites.entries()).find(([id, s]) => 
         Phaser.Math.Distance.Between(s.x, s.y, effect.x, effect.y) < 5
       );
       if (shooter) {
@@ -194,7 +201,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   private connectToServer(): void {
-    // Determine server URL. Use environment variable or default to localhost.
     const serverUrl = import.meta.env.VITE_SERVER_URL || window.location.hostname;
     const serverPort = parseInt(import.meta.env.VITE_SERVER_PORT) || 9208;
 
@@ -203,6 +209,7 @@ export class GameScene extends Phaser.Scene {
       url: serverUrl.startsWith('http') ? serverUrl : `${window.location.protocol}//${serverUrl}`,
       port: serverPort 
     });
+
     this.channel.onConnect((error) => {
       if (error) return this.connectionText.setText('Connection Failed');
       this.connectionText.destroy();
@@ -213,7 +220,7 @@ export class GameScene extends Phaser.Scene {
         this.updateObstacles(welcome.gameState.obstacles);
       });
       this.channel.on(MessageType.PLAYER_JOIN, (data: any) => this.createPlayerSprite(data as PlayerState));
-      this.channel.on(MessageType.PLAYER_LEAVE, (data: any) => this.removePlayerSprite((data as { id: string }).id));
+      this.channel.on(MessageType.PLAYER_LEAVE, (data: any) => this.removePlayerSprite((data as {id:string}).id));
       this.channel.on(MessageType.GAME_STATE, (data: any) => this.updateGameState(data as GameState));
       this.channel.on(MessageType.KILL_LOG, (data: any) => this.addKillLog(data as KillLogEntry));
       this.channel.on(MessageType.EFFECT_EVENT, (data: any) => this.triggerEffect(data as EffectState));
@@ -232,7 +239,7 @@ export class GameScene extends Phaser.Scene {
     const sprite = this.add.sprite(player.x, player.y, 'characters', skin).setOrigin(0.5);
     const label = this.add.text(player.x, player.y - 35, player.id === this.playerId ? 'YOU' : player.id.slice(0, 4), { fontSize: '12px' }).setOrigin(0.5);
     const hb = this.add.graphics();
-
+    
     this.playerSprites.set(player.id, sprite);
     this.playerLabels.set(player.id, label);
     this.healthBars.set(player.id, hb);
@@ -256,8 +263,7 @@ export class GameScene extends Phaser.Scene {
     this.obstacleSprites.forEach(s => s.destroy());
     this.obstacleSprites = [];
     obstacles.forEach(o => {
-      // Frame 14 is usually a cleaner wall/tile without heavy borders
-      const s = this.add.sprite(o.x, o.y, 'tiles', 16).setOrigin(0, 0).setDisplaySize(o.width, o.height);
+      const s = this.add.sprite(o.x, o.y, 'tiles', 14).setOrigin(0, 0).setDisplaySize(o.width, o.height);
       this.obstacleSprites.push(s);
     });
   }
@@ -265,54 +271,55 @@ export class GameScene extends Phaser.Scene {
   private updateGameState(state: GameState): void {
     if (state.phase === GamePhase.LOBBY) this.phaseText.setText('WAITING FOR PLAYERS...');
     else if (state.phase === GamePhase.COUNTDOWN) this.phaseText.setText(`STARTING IN ${state.phaseTimer}`);
-    else if (state.phase === GamePhase.GAME_OVER) this.phaseText.setText(`WINNER: ${state.winnerId === this.playerId ? 'YOU!' : state.winnerId?.slice(0, 4) || 'NONE'}`);
+    else if (state.phase === GamePhase.GAME_OVER) this.phaseText.setText(`WINNER: ${state.winnerId === this.playerId ? 'YOU!' : state.winnerId?.slice(0,4) || 'NONE'}`);
     else this.phaseText.setText('');
 
     this.zoneGraphics.clear().lineStyle(4, 0xff0000, 0.5).strokeCircle(state.zone.x, state.zone.y, state.zone.radius);
 
     // Update Items
     this.itemSprites.forEach(s => s.setVisible(false));
-    state.items.forEach(item => {
+    state.items.forEach((item: any) => {
       let sprite = this.itemSprites.get(item.id);
       if (!sprite) {
         let texture = 'weapon_pistol';
-        if (item.type === ItemType.MEDKIT) texture = 'tiles'; // will set frame
-        else if (item.type === ItemType.AMMO) texture = 'tiles';
-
-        sprite = this.add.sprite(item.x, item.y, texture).setOrigin(0.5).setScale(0.75);
-        if (item.type === ItemType.MEDKIT) sprite.setFrame(268); // medkit-like tile
-        else if (item.type === ItemType.AMMO) sprite.setFrame(129); // ammo-like tile
+        if (item.type === ItemType.MEDKIT) texture = 'tiles'; 
+        else if (item.type === ItemType.AMMO) texture = 'tiles'; 
+        
+        sprite = this.add.sprite(item.x, item.y, texture).setOrigin(0.5).setScale(0.5);
+        if (item.type === ItemType.MEDKIT) sprite.setFrame(84); 
+        else if (item.type === ItemType.AMMO) sprite.setFrame(152); 
         else if (item.type === ItemType.WEAPON_RIFLE) sprite.setTexture('weapon_rifle');
         else if (item.type === ItemType.WEAPON_SHOTGUN) sprite.setTexture('weapon_shotgun');
         else if (item.type === ItemType.WEAPON_SNIPER) sprite.setTexture('weapon_sniper');
-
+        
         this.itemSprites.set(item.id, sprite);
       }
       sprite.setPosition(item.x, item.y).setVisible(true);
     });
 
     this.projectileGraphics.clear();
-    state.projectiles.forEach(p => {
+    state.projectiles.forEach((p: any) => {
       this.projectileGraphics.fillStyle(p.color, 1).fillCircle(p.x, p.y, 4);
     });
 
     Object.entries(state.players).forEach(([id, p]) => {
+      const player = p as PlayerState;
       const sprite = this.playerSprites.get(id);
       const label = this.playerLabels.get(id);
       const hb = this.healthBars.get(id);
       if (sprite) {
-        sprite.setPosition(p.x, p.y).setAlpha(p.isDead ? 0.3 : 1).setRotation(p.angle);
-        if (id === this.playerId && p.isDead) this.phaseText.setText('SPECTATING');
+        sprite.setPosition(player.x, player.y).setAlpha(player.isDead ? 0.3 : 1).setRotation(player.angle);
+        if (id === this.playerId && player.isDead) this.phaseText.setText('SPECTATING');
       }
-      if (label) label.setPosition(p.x, p.y - 35);
+      if (label) label.setPosition(player.x, player.y - 35);
       if (hb) {
-        hb.clear().fillStyle(0x000000, 0.5).fillRect(p.x - 16, p.y - 25, 32, 4);
-        hb.fillStyle(p.health > 30 ? 0x00ff00 : 0xff0000, 1).fillRect(p.x - 16, p.y - 25, (p.health / p.maxHealth) * 32, 4);
+        hb.clear().fillStyle(0x000000, 0.5).fillRect(player.x - 16, player.y - 25, 32, 4);
+        hb.fillStyle(player.health > 30 ? 0x00ff00 : 0xff0000, 1).fillRect(player.x - 16, player.y - 25, (player.health/player.maxHealth)*32, 4);
       }
       if (id === this.playerId) {
-        this.inventoryText.setText(`Kills: ${p.kills} | Weapon: ${p.activeWeapon.toUpperCase()} | Ammo: ${p.inventory.ammo} | Medkits: ${p.inventory.medkits}`);
-        if (p.health < this.lastHealth) this.cameras.main.shake(100, 0.01);
-        this.lastHealth = p.health;
+        this.inventoryText.setText(`Kills: ${player.kills} | Weapon: ${player.activeWeapon.toUpperCase()} | Ammo: ${player.inventory.ammo} | Medkits: ${player.inventory.medkits}`);
+        if (player.health < this.lastHealth) this.cameras.main.shake(100, 0.01);
+        this.lastHealth = player.health;
       }
     });
   }
@@ -335,7 +342,9 @@ export class GameScene extends Phaser.Scene {
 
     if (JSON.stringify(input) !== JSON.stringify(this.lastInput)) {
       this.lastInput = { ...input };
-      if (this.channel && this.playerId) this.channel.emit(MessageType.PLAYER_INPUT, input);
+      if (this.channel && this.playerId) {
+        this.channel.emit(MessageType.PLAYER_INPUT, input);
+      }
     }
   }
 }
