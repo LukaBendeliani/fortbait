@@ -8,7 +8,7 @@ const config: Phaser.Types.Core.GameConfig = {
   height: window.innerHeight,
   parent: 'game-container',
   backgroundColor: '#16213e',
-  scene: [GameScene],
+  scene: [GameScene as any], // Use any here to avoid TS issues during build resolution
   scale: {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH

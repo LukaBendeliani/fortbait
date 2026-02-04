@@ -9,6 +9,10 @@
     "forceConsistentCasingInFileNames": true,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "baseUrl": ".",
+    "paths": {
+      "@game/shared": ["packages/shared/src/index.ts"]
+    }
   }
 }

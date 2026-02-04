@@ -12,6 +12,8 @@ import {
   KillLogEntry,
   EffectType,
   EffectState,
+  ItemState,
+  ProjectileState,
 } from '@game/shared';
 
 export class GameScene extends Phaser.Scene {
@@ -186,7 +188,7 @@ export class GameScene extends Phaser.Scene {
     } else if (effect.type === EffectType.MUZZLE_FLASH) {
       this.flashEmitter.explode(5, effect.x, effect.y);
       
-      const shooter = Array.from(this.playerSprites.entries()).find(([id, s]) => 
+      const shooter = Array.from(this.playerSprites.entries()).find(([_, s]) => 
         Phaser.Math.Distance.Between(s.x, s.y, effect.x, effect.y) < 5
       );
       if (shooter) {
@@ -278,7 +280,7 @@ export class GameScene extends Phaser.Scene {
 
     // Update Items
     this.itemSprites.forEach(s => s.setVisible(false));
-    state.items.forEach((item: any) => {
+    state.items.forEach((item: ItemState) => {
       let sprite = this.itemSprites.get(item.id);
       if (!sprite) {
         let texture = 'weapon_pistol';
@@ -298,28 +300,27 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.projectileGraphics.clear();
-    state.projectiles.forEach((p: any) => {
+    state.projectiles.forEach((p: ProjectileState) => {
       this.projectileGraphics.fillStyle(p.color, 1).fillCircle(p.x, p.y, 4);
     });
 
-    Object.entries(state.players).forEach(([id, p]) => {
-      const player = p as PlayerState;
+    Object.entries(state.players).forEach(([id, p]: [string, PlayerState]) => {
       const sprite = this.playerSprites.get(id);
       const label = this.playerLabels.get(id);
       const hb = this.healthBars.get(id);
       if (sprite) {
-        sprite.setPosition(player.x, player.y).setAlpha(player.isDead ? 0.3 : 1).setRotation(player.angle);
-        if (id === this.playerId && player.isDead) this.phaseText.setText('SPECTATING');
+        sprite.setPosition(p.x, p.y).setAlpha(p.isDead ? 0.3 : 1).setRotation(p.angle);
+        if (id === this.playerId && p.isDead) this.phaseText.setText('SPECTATING');
       }
-      if (label) label.setPosition(player.x, player.y - 35);
+      if (label) label.setPosition(p.x, p.y - 35);
       if (hb) {
-        hb.clear().fillStyle(0x000000, 0.5).fillRect(player.x - 16, player.y - 25, 32, 4);
-        hb.fillStyle(player.health > 30 ? 0x00ff00 : 0xff0000, 1).fillRect(player.x - 16, player.y - 25, (player.health/player.maxHealth)*32, 4);
+        hb.clear().fillStyle(0x000000, 0.5).fillRect(p.x - 16, p.y - 25, 32, 4);
+        hb.fillStyle(p.health > 30 ? 0x00ff00 : 0xff0000, 1).fillRect(p.x - 16, p.y - 25, (p.health/p.maxHealth)*32, 4);
       }
       if (id === this.playerId) {
-        this.inventoryText.setText(`Kills: ${player.kills} | Weapon: ${player.activeWeapon.toUpperCase()} | Ammo: ${player.inventory.ammo} | Medkits: ${player.inventory.medkits}`);
-        if (player.health < this.lastHealth) this.cameras.main.shake(100, 0.01);
-        this.lastHealth = player.health;
+        this.inventoryText.setText(`Kills: ${p.kills} | Weapon: ${p.activeWeapon.toUpperCase()} | Ammo: ${p.inventory.ammo} | Medkits: ${p.inventory.medkits}`);
+        if (p.health < this.lastHealth) this.cameras.main.shake(100, 0.01);
+        this.lastHealth = p.health;
       }
     });
   }
