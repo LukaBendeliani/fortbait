@@ -38,11 +38,11 @@ export class GameScene extends Phaser.Scene {
   private obstacleSprites: Phaser.GameObjects.Sprite[] = [];
   private obstacleGraphics!: Phaser.GameObjects.Graphics;
   private minimapCamera!: Phaser.Cameras.Scene2D.Camera;
-  
+
   private bloodEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   private sparksEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   private flashEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
-  
+
   private lastHealth: number = 100;
 
   constructor() {
@@ -50,6 +50,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   preload() {
+    console.log(this.obstacleGraphics, this.itemGraphics);
     this.load.atlas('characters', '/assets/spritesheet_characters.png', '/assets/spritesheet_characters.xml');
     this.load.spritesheet('tiles', '/assets/spritesheet_tiles.png', { frameWidth: 64, frameHeight: 64 });
     this.load.image('weapon_pistol', '/assets/weapon_pistol.png');
@@ -70,7 +71,7 @@ export class GameScene extends Phaser.Scene {
       .setBackgroundColor(0x000000)
       .setAlpha(0.8)
       .setBounds(0, 0, GAME_CONFIG.WORLD_WIDTH, GAME_CONFIG.WORLD_HEIGHT);
-    
+
     this.connectionText = this.add.text(width / 2, height / 2, 'Connecting...', { fontSize: '24px', color: '#4ecdc4' }).setOrigin(0.5).setScrollFactor(0);
     this.inventoryText = this.add.text(10, 10, '', { fontSize: '16px', color: '#ffffff', backgroundColor: '#00000088' }).setDepth(10).setScrollFactor(0);
     this.phaseText = this.add.text(width / 2, 50, '', { fontSize: '32px', color: '#ffffff', stroke: '#000000', strokeThickness: 4 }).setOrigin(0.5).setDepth(10).setScrollFactor(0);
@@ -91,7 +92,7 @@ export class GameScene extends Phaser.Scene {
     // Particles
     this.createPixelTexture();
     this.bloodEmitter = this.add.particles(0, 0, 'pixel', {
-      color: [ 0xff0000, 0x880000 ],
+      color: [0xff0000, 0x880000],
       speed: { min: 50, max: 100 },
       scale: { start: 1, end: 0 },
       lifespan: 400,
@@ -99,7 +100,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.sparksEmitter = this.add.particles(0, 0, 'pixel', {
-      color: [ 0xffff00, 0xffa500 ],
+      color: [0xffff00, 0xffa500],
       speed: { min: 80, max: 150 },
       scale: { start: 1, end: 0 },
       lifespan: 300,
@@ -107,7 +108,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.flashEmitter = this.add.particles(0, 0, 'pixel', {
-      color: [ 0xffffff, 0xffff00 ],
+      color: [0xffffff, 0xffff00],
       scale: { start: 2, end: 0 },
       lifespan: 100,
       speed: 20,
@@ -150,7 +151,7 @@ export class GameScene extends Phaser.Scene {
     const killer = entry.killerId === this.playerId ? 'YOU' : (entry.killerId === 'ZONE' ? 'ZONE' : entry.killerId.slice(0, 4));
     const victim = entry.victimId === this.playerId ? 'YOU' : entry.victimId.slice(0, 4);
     const weapon = entry.weapon.toUpperCase();
-    
+
     const text = this.add.text(width - 170, 170 + this.killFeedTexts.length * 20, `${killer} [${weapon}] ${victim}`, {
       fontSize: '14px',
       color: entry.victimId === this.playerId ? '#ff4d4d' : (entry.killerId === this.playerId ? '#4dff4d' : '#ffffff'),
@@ -187,8 +188,8 @@ export class GameScene extends Phaser.Scene {
       this.sparksEmitter.explode(8, effect.x, effect.y);
     } else if (effect.type === EffectType.MUZZLE_FLASH) {
       this.flashEmitter.explode(5, effect.x, effect.y);
-      
-      const shooter = Array.from(this.playerSprites.entries()).find(([_, s]) => 
+
+      const shooter = Array.from(this.playerSprites.entries()).find(([_, s]) =>
         Phaser.Math.Distance.Between(s.x, s.y, effect.x, effect.y) < 5
       );
       if (shooter) {
@@ -207,9 +208,9 @@ export class GameScene extends Phaser.Scene {
     const serverPort = parseInt(import.meta.env.VITE_SERVER_PORT) || 9208;
 
     console.log(`Connecting to server at ${serverUrl}:${serverPort}`);
-    this.channel = geckos({ 
+    this.channel = geckos({
       url: serverUrl.startsWith('http') ? serverUrl : `${window.location.protocol}//${serverUrl}`,
-      port: serverPort 
+      port: serverPort
     });
 
     this.channel.onConnect((error) => {
@@ -222,10 +223,11 @@ export class GameScene extends Phaser.Scene {
         this.updateObstacles(welcome.gameState.obstacles);
       });
       this.channel.on(MessageType.PLAYER_JOIN, (data: any) => this.createPlayerSprite(data as PlayerState));
-      this.channel.on(MessageType.PLAYER_LEAVE, (data: any) => this.removePlayerSprite((data as {id:string}).id));
+      this.channel.on(MessageType.PLAYER_LEAVE, (data: any) => this.removePlayerSprite((data as { id: string }).id));
       this.channel.on(MessageType.GAME_STATE, (data: any) => this.updateGameState(data as GameState));
       this.channel.on(MessageType.KILL_LOG, (data: any) => this.addKillLog(data as KillLogEntry));
       this.channel.on(MessageType.EFFECT_EVENT, (data: any) => this.triggerEffect(data as EffectState));
+      return;
     });
   }
 
@@ -241,7 +243,7 @@ export class GameScene extends Phaser.Scene {
     const sprite = this.add.sprite(player.x, player.y, 'characters', skin).setOrigin(0.5);
     const label = this.add.text(player.x, player.y - 35, player.id === this.playerId ? 'YOU' : player.id.slice(0, 4), { fontSize: '12px' }).setOrigin(0.5);
     const hb = this.add.graphics();
-    
+
     this.playerSprites.set(player.id, sprite);
     this.playerLabels.set(player.id, label);
     this.healthBars.set(player.id, hb);
@@ -273,7 +275,7 @@ export class GameScene extends Phaser.Scene {
   private updateGameState(state: GameState): void {
     if (state.phase === GamePhase.LOBBY) this.phaseText.setText('WAITING FOR PLAYERS...');
     else if (state.phase === GamePhase.COUNTDOWN) this.phaseText.setText(`STARTING IN ${state.phaseTimer}`);
-    else if (state.phase === GamePhase.GAME_OVER) this.phaseText.setText(`WINNER: ${state.winnerId === this.playerId ? 'YOU!' : state.winnerId?.slice(0,4) || 'NONE'}`);
+    else if (state.phase === GamePhase.GAME_OVER) this.phaseText.setText(`WINNER: ${state.winnerId === this.playerId ? 'YOU!' : state.winnerId?.slice(0, 4) || 'NONE'}`);
     else this.phaseText.setText('');
 
     this.zoneGraphics.clear().lineStyle(4, 0xff0000, 0.5).strokeCircle(state.zone.x, state.zone.y, state.zone.radius);
@@ -284,16 +286,16 @@ export class GameScene extends Phaser.Scene {
       let sprite = this.itemSprites.get(item.id);
       if (!sprite) {
         let texture = 'weapon_pistol';
-        if (item.type === ItemType.MEDKIT) texture = 'tiles'; 
-        else if (item.type === ItemType.AMMO) texture = 'tiles'; 
-        
+        if (item.type === ItemType.MEDKIT) texture = 'tiles';
+        else if (item.type === ItemType.AMMO) texture = 'tiles';
+
         sprite = this.add.sprite(item.x, item.y, texture).setOrigin(0.5).setScale(0.5);
-        if (item.type === ItemType.MEDKIT) sprite.setFrame(84); 
-        else if (item.type === ItemType.AMMO) sprite.setFrame(152); 
+        if (item.type === ItemType.MEDKIT) sprite.setFrame(84);
+        else if (item.type === ItemType.AMMO) sprite.setFrame(152);
         else if (item.type === ItemType.WEAPON_RIFLE) sprite.setTexture('weapon_rifle');
         else if (item.type === ItemType.WEAPON_SHOTGUN) sprite.setTexture('weapon_shotgun');
         else if (item.type === ItemType.WEAPON_SNIPER) sprite.setTexture('weapon_sniper');
-        
+
         this.itemSprites.set(item.id, sprite);
       }
       sprite.setPosition(item.x, item.y).setVisible(true);
@@ -315,7 +317,7 @@ export class GameScene extends Phaser.Scene {
       if (label) label.setPosition(p.x, p.y - 35);
       if (hb) {
         hb.clear().fillStyle(0x000000, 0.5).fillRect(p.x - 16, p.y - 25, 32, 4);
-        hb.fillStyle(p.health > 30 ? 0x00ff00 : 0xff0000, 1).fillRect(p.x - 16, p.y - 25, (p.health/p.maxHealth)*32, 4);
+        hb.fillStyle(p.health > 30 ? 0x00ff00 : 0xff0000, 1).fillRect(p.x - 16, p.y - 25, (p.health / p.maxHealth) * 32, 4);
       }
       if (id === this.playerId) {
         this.inventoryText.setText(`Kills: ${p.kills} | Weapon: ${p.activeWeapon.toUpperCase()} | Ammo: ${p.inventory.ammo} | Medkits: ${p.inventory.medkits}`);

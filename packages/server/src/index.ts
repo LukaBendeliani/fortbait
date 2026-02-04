@@ -19,6 +19,7 @@ import {
 } from '@game/shared';
 
 // Game state
+
 const players: Map<string, PlayerState> = new Map();
 const playerInputs: Map<string, InputState> = new Map();
 const projectiles: Map<string, ProjectileState> = new Map();
@@ -117,7 +118,7 @@ function spawnItems(): void {
     const id = `item_${itemIdCounter++}`;
     const types = [ItemType.MEDKIT, ItemType.AMMO, ItemType.WEAPON_RIFLE, ItemType.WEAPON_SHOTGUN, ItemType.WEAPON_SNIPER];
     const type = types[Math.floor(Math.random() * types.length)];
-    
+
     items.set(id, {
       id,
       type,
@@ -310,13 +311,13 @@ function gameLoop(): void {
 
   players.forEach((player, id) => {
     if (player.isDead) return;
-    updatePlayer(player, playerInputs.get(id) || {up:false,down:false,left:false,right:false,angle:0}, deltaTime);
+    updatePlayer(player, playerInputs.get(id) || { up: false, down: false, left: false, right: false, angle: 0 }, deltaTime);
 
     items.forEach((item, itemId) => {
       const dx = player.x - item.x;
       const dy = player.y - item.y;
       const pickupRadius = (GAME_CONFIG.PLAYER_SIZE + GAME_CONFIG.ITEM_SIZE) / 2;
-      if (dx*dx + dy*dy < pickupRadius * pickupRadius) {
+      if (dx * dx + dy * dy < pickupRadius * pickupRadius) {
         if (item.type === ItemType.MEDKIT) player.inventory.medkits++;
         if (item.type === ItemType.AMMO) player.inventory.ammo += 40;
         if (item.type === ItemType.WEAPON_RIFLE) player.activeWeapon = WeaponType.RIFLE;
@@ -328,7 +329,7 @@ function gameLoop(): void {
 
     const dx = player.x - zone.x;
     const dy = player.y - zone.y;
-    if (dx*dx + dy*dy > zone.radius*zone.radius && shouldApplyDamage && gamePhase === GamePhase.IN_GAME) {
+    if (dx * dx + dy * dy > zone.radius * zone.radius && shouldApplyDamage && gamePhase === GamePhase.IN_GAME) {
       player.health -= GAME_CONFIG.ZONE_DAMAGE;
       if (player.health <= 0) {
         player.isDead = true;
@@ -363,7 +364,7 @@ function gameLoop(): void {
       const dx = proj.x - p.x;
       const dy = proj.y - p.y;
       const hitRadius = (GAME_CONFIG.PLAYER_SIZE + GAME_CONFIG.PROJECTILE_SIZE) / 2;
-      if (dx*dx + dy*dy < hitRadius * hitRadius) {
+      if (dx * dx + dy * dy < hitRadius * hitRadius) {
         p.health -= proj.damage;
         io.emit(MessageType.EFFECT_EVENT, { x: proj.x, y: proj.y, type: EffectType.BLOOD });
         projectiles.delete(id);
