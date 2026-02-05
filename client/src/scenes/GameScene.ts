@@ -51,7 +51,7 @@ export class GameScene extends Phaser.Scene {
 
     preload() {
         console.log(this.obstacleGraphics, this.itemGraphics);
-        this.load.atlas('characters', '/assets/spritesheet_characters.png', '/assets/spritesheet_characters.xml');
+        this.load.atlasXML('characters', '/assets/spritesheet_characters.png', '/assets/spritesheet_characters.xml');
         this.load.spritesheet('tiles', '/assets/spritesheet_tiles.png', { frameWidth: 64, frameHeight: 64 });
         this.load.image('weapon_pistol', '/assets/weapon_pistol.png');
         this.load.image('weapon_rifle', '/assets/weapon_rifle.png');
