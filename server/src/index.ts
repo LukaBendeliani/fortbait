@@ -1,4 +1,5 @@
-import geckos, { GeckosServer, ServerChannel } from '@geckos.io/server';
+import http from 'node:http';
+import { Server, Socket } from 'socket.io';
 import {
     GAME_CONFIG,
     MessageType,
@@ -16,8 +17,6 @@ import {
     KillLogEntry,
     EffectType,
 } from './shared/index.js';
-
-// Game state
 
 const players: Map<string, PlayerState> = new Map();
 const playerInputs: Map<string, InputState> = new Map();
@@ -38,7 +37,8 @@ const zone: ZoneState = {
 let projectileIdCounter = 0;
 let itemIdCounter = 0;
 
-// Initialize random obstacles
+const DEFAULT_INPUT: InputState = { up: false, down: false, left: false, right: false, angle: 0 };
+
 function initObstacles(): void {
     for (let i = 0; i < 100; i++) {
         obstacles.push({
@@ -51,7 +51,6 @@ function initObstacles(): void {
 }
 initObstacles();
 
-// Collision detection (x, y are player center)
 function checkCollision(centerX: number, centerY: number, size: number): boolean {
     const halfSize = size / 2;
     const left = centerX - halfSize;
@@ -59,19 +58,20 @@ function checkCollision(centerX: number, centerY: number, size: number): boolean
     const top = centerY - halfSize;
     const bottom = centerY + halfSize;
 
-    for (const obs of obstacles) {
-        if (left < obs.x + obs.width && right > obs.x && top < obs.y + obs.height && bottom > obs.y) {
+    for (const obstacle of obstacles) {
+        if (left < obstacle.x + obstacle.width && right > obstacle.x && top < obstacle.y + obstacle.height && bottom > obstacle.y) {
             return true;
         }
     }
+
     return false;
 }
 
-// Find a valid spawn point that doesn't collide with obstacles
 function findValidSpawn(): { x: number; y: number } {
     const size = GAME_CONFIG.PLAYER_SIZE;
     const halfSize = size / 2;
     let attempts = 0;
+
     while (attempts < 50) {
         const x = halfSize + Math.random() * (GAME_CONFIG.WORLD_WIDTH - size);
         const y = halfSize + Math.random() * (GAME_CONFIG.WORLD_HEIGHT - size);
@@ -80,16 +80,15 @@ function findValidSpawn(): { x: number; y: number } {
         }
         attempts++;
     }
-    return { x: 100, y: 100 }; // Fallback
+
+    return { x: 100, y: 100 };
 }
 
-// Generate random color for player
 function randomColor(): number {
     const colors = [0xff6b6b, 0x4ecdc4, 0x45b7d1, 0xf9ca24, 0x6c5ce7, 0xa29bfe];
     return colors[Math.floor(Math.random() * colors.length)];
 }
 
-// Create new player state
 function createPlayer(id: string): PlayerState {
     const spawn = findValidSpawn();
     return {
@@ -110,9 +109,11 @@ function createPlayer(id: string): PlayerState {
     };
 }
 
-// Spawn random items
 function spawnItems(): void {
-    if (gamePhase !== GamePhase.IN_GAME && gamePhase !== GamePhase.COUNTDOWN) return;
+    if (gamePhase !== GamePhase.IN_GAME && gamePhase !== GamePhase.COUNTDOWN) {
+        return;
+    }
+
     while (items.size < GAME_CONFIG.MAX_ITEMS) {
         const id = `item_${itemIdCounter++}`;
         const types = [ItemType.MEDKIT, ItemType.AMMO, ItemType.WEAPON_RIFLE, ItemType.WEAPON_SHOTGUN, ItemType.WEAPON_SNIPER];
@@ -127,12 +128,12 @@ function spawnItems(): void {
     }
 }
 
-// Get current game state
 function getGameState(): GameState {
     const playersObj: Record<string, PlayerState> = {};
     players.forEach((player, id) => {
         playersObj[id] = player;
     });
+
     return {
         players: playersObj,
         projectiles: Array.from(projectiles.values()),
@@ -146,98 +147,128 @@ function getGameState(): GameState {
     };
 }
 
-// Update player position based on input
 function updatePlayer(player: PlayerState, input: InputState, deltaTime: number): void {
-    if (player.isDead) return;
+    if (player.isDead) {
+        return;
+    }
+
     const speed = GAME_CONFIG.PLAYER_SPEED * deltaTime;
     const oldX = player.x;
     const oldY = player.y;
 
     player.angle = input.angle;
 
-    if (input.up) player.y -= speed;
-    if (input.down) player.y += speed;
-    if (checkCollision(player.x, player.y, GAME_CONFIG.PLAYER_SIZE)) player.y = oldY;
+    if (input.up) {
+        player.y -= speed;
+    }
+    if (input.down) {
+        player.y += speed;
+    }
+    if (checkCollision(player.x, player.y, GAME_CONFIG.PLAYER_SIZE)) {
+        player.y = oldY;
+    }
 
-    if (input.left) player.x -= speed;
-    if (input.right) player.x += speed;
-    if (checkCollision(player.x, player.y, GAME_CONFIG.PLAYER_SIZE)) player.x = oldX;
+    if (input.left) {
+        player.x -= speed;
+    }
+    if (input.right) {
+        player.x += speed;
+    }
+    if (checkCollision(player.x, player.y, GAME_CONFIG.PLAYER_SIZE)) {
+        player.x = oldX;
+    }
 
-    // Clamp to world bounds
     const halfSize = GAME_CONFIG.PLAYER_SIZE / 2;
     player.x = Math.max(halfSize, Math.min(GAME_CONFIG.WORLD_WIDTH - halfSize, player.x));
     player.y = Math.max(halfSize, Math.min(GAME_CONFIG.WORLD_HEIGHT - halfSize, player.y));
 }
 
-// Initialize geckos.io server
-const io: GeckosServer = geckos({
-    cors: { origin: '*', allowAuthorization: true },
+const httpServer = http.createServer();
+const io = new Server(httpServer, {
+    cors: {
+        origin: '*',
+        methods: ['GET', 'POST'],
+    },
+    transports: ['websocket', 'polling'],
 });
 
-io.onConnection((channel: ServerChannel) => {
-    const playerId = channel.id!;
+io.on('connection', (socket: Socket) => {
+    const playerId = socket.id;
     console.log(`Player connected: ${playerId}`);
 
     const player = createPlayer(playerId);
     players.set(playerId, player);
-    playerInputs.set(playerId, { up: false, down: false, left: false, right: false, angle: 0 });
+    playerInputs.set(playerId, { ...DEFAULT_INPUT });
 
-    channel.emit(MessageType.WELCOME, { playerId, gameState: getGameState() });
-    channel.broadcast.emit(MessageType.PLAYER_JOIN, player);
+    socket.emit(MessageType.WELCOME, { playerId, gameState: getGameState() });
+    socket.broadcast.emit(MessageType.PLAYER_JOIN, player);
 
-    channel.on(MessageType.PLAYER_INPUT, (data: any) => {
-        playerInputs.set(playerId, data as InputState);
+    socket.on(MessageType.PLAYER_INPUT, (data: InputState) => {
+        playerInputs.set(playerId, data);
     });
 
-    channel.on(MessageType.SHOOT, (data: any) => {
-        const angle = data as number;
-        const p = players.get(playerId);
-        if (!p || p.isDead || gamePhase !== GamePhase.IN_GAME) return;
+    socket.on(MessageType.SHOOT, (angle: number) => {
+        const playerState = players.get(playerId);
+        if (!playerState || playerState.isDead || gamePhase !== GamePhase.IN_GAME) {
+            return;
+        }
 
-        const weapon = WEAPON_CONFIG[p.activeWeapon];
+        const weapon = WEAPON_CONFIG[playerState.activeWeapon];
         const now = Date.now();
         const lastShot = lastShotTime.get(playerId) || 0;
+        if (now - lastShot < weapon.fireRate) {
+            return;
+        }
 
-        if (now - lastShot < weapon.fireRate) return;
-        if (p.inventory.ammo < weapon.ammoPerShot) return;
+        if (playerState.inventory.ammo < weapon.ammoPerShot) {
+            return;
+        }
 
-        p.inventory.ammo -= weapon.ammoPerShot;
+        playerState.inventory.ammo -= weapon.ammoPerShot;
         lastShotTime.set(playerId, now);
 
-        io.emit(MessageType.EFFECT_EVENT, { x: p.x, y: p.y, type: EffectType.MUZZLE_FLASH });
+        io.emit(MessageType.EFFECT_EVENT, { x: playerState.x, y: playerState.y, type: EffectType.MUZZLE_FLASH });
 
-        let color = 0xffff00; // Default yellow
-        if (p.activeWeapon === WeaponType.SNIPER) color = 0xff0000; // Red
-        if (p.activeWeapon === WeaponType.SHOTGUN) color = 0xffa500; // Orange
+        let color = 0xffff00;
+        if (playerState.activeWeapon === WeaponType.SNIPER) {
+            color = 0xff0000;
+        }
+        if (playerState.activeWeapon === WeaponType.SHOTGUN) {
+            color = 0xffa500;
+        }
 
         for (let i = 0; i < weapon.projectileCount; i++) {
-            const id = `p_${projectileIdCounter++}`;
+            const projectileId = `p_${projectileIdCounter++}`;
             const spread = (Math.random() - 0.5) * weapon.spread;
-            projectiles.set(id, {
-                id, ownerId: playerId,
-                x: p.x,
-                y: p.y,
+            projectiles.set(projectileId, {
+                id: projectileId,
+                ownerId: playerId,
+                x: playerState.x,
+                y: playerState.y,
                 angle: angle + spread,
                 damage: weapon.damage,
                 speed: weapon.projectileSpeed,
                 color,
                 maxRange: weapon.range,
                 traveledDistance: 0,
-                canPassThroughObstacles: p.activeWeapon === WeaponType.SNIPER,
+                canPassThroughObstacles: playerState.activeWeapon === WeaponType.SNIPER,
             });
         }
     });
 
-    channel.on(MessageType.USE_ITEM, (data: any) => {
-        const p = players.get(playerId);
-        if (!p || p.isDead) return;
-        if (data === ItemType.MEDKIT && p.inventory.medkits > 0) {
-            p.inventory.medkits--;
-            p.health = Math.min(p.maxHealth, p.health + 40);
+    socket.on(MessageType.USE_ITEM, (itemType: ItemType) => {
+        const playerState = players.get(playerId);
+        if (!playerState || playerState.isDead) {
+            return;
+        }
+
+        if (itemType === ItemType.MEDKIT && playerState.inventory.medkits > 0) {
+            playerState.inventory.medkits--;
+            playerState.health = Math.min(playerState.maxHealth, playerState.health + 40);
         }
     });
 
-    channel.onDisconnect(() => {
+    socket.on('disconnect', () => {
         players.delete(playerId);
         playerInputs.delete(playerId);
         lastShotTime.delete(playerId);
@@ -255,7 +286,6 @@ function broadcastKill(killerId: string, victimId: string, weapon: WeaponType | 
     io.emit(MessageType.KILL_LOG, log);
 }
 
-// Game loop
 let lastTime = Date.now();
 let damageTimer = 0;
 const tickInterval = 1000 / GAME_CONFIG.TICK_RATE;
@@ -275,15 +305,15 @@ function gameLoop(): void {
         phaseTimer -= deltaTime;
         if (phaseTimer <= 0) {
             gamePhase = GamePhase.IN_GAME;
-            players.forEach(p => {
-                p.isDead = false;
-                p.health = 100;
-                p.kills = 0;
+            players.forEach((player) => {
+                player.isDead = false;
+                player.health = 100;
+                player.kills = 0;
             });
         }
     } else if (gamePhase === GamePhase.IN_GAME) {
         zone.radius = Math.max(0, zone.radius - GAME_CONFIG.ZONE_SHRINK_RATE * deltaTime);
-        const alivePlayers = Array.from(players.values()).filter(p => !p.isDead);
+        const alivePlayers = Array.from(players.values()).filter((player) => !player.isDead);
         if (alivePlayers.length <= 1 && players.size >= 1) {
             winnerId = alivePlayers.length === 1 ? alivePlayers[0].id : null;
             gamePhase = GamePhase.GAME_OVER;
@@ -295,9 +325,9 @@ function gameLoop(): void {
             gamePhase = GamePhase.LOBBY;
             items.clear();
             projectiles.clear();
-            players.forEach(p => {
-                const respawn = createPlayer(p.id);
-                Object.assign(p, respawn);
+            players.forEach((player) => {
+                const respawn = createPlayer(player.id);
+                Object.assign(player, respawn);
             });
         }
     }
@@ -306,29 +336,44 @@ function gameLoop(): void {
 
     damageTimer += deltaTime;
     const shouldApplyDamage = damageTimer >= 1.0;
-    if (shouldApplyDamage) damageTimer = 0;
+    if (shouldApplyDamage) {
+        damageTimer = 0;
+    }
 
     players.forEach((player, id) => {
-        if (player.isDead) return;
-        updatePlayer(player, playerInputs.get(id) || { up: false, down: false, left: false, right: false, angle: 0 }, deltaTime);
+        if (player.isDead) {
+            return;
+        }
+
+        updatePlayer(player, playerInputs.get(id) || DEFAULT_INPUT, deltaTime);
 
         items.forEach((item, itemId) => {
             const dx = player.x - item.x;
             const dy = player.y - item.y;
             const pickupRadius = (GAME_CONFIG.PLAYER_SIZE + GAME_CONFIG.ITEM_SIZE) / 2;
             if (dx * dx + dy * dy < pickupRadius * pickupRadius) {
-                if (item.type === ItemType.MEDKIT) player.inventory.medkits++;
-                if (item.type === ItemType.AMMO) player.inventory.ammo += 40;
-                if (item.type === ItemType.WEAPON_RIFLE) player.activeWeapon = WeaponType.RIFLE;
-                if (item.type === ItemType.WEAPON_SHOTGUN) player.activeWeapon = WeaponType.SHOTGUN;
-                if (item.type === ItemType.WEAPON_SNIPER) player.activeWeapon = WeaponType.SNIPER;
+                if (item.type === ItemType.MEDKIT) {
+                    player.inventory.medkits++;
+                }
+                if (item.type === ItemType.AMMO) {
+                    player.inventory.ammo += 40;
+                }
+                if (item.type === ItemType.WEAPON_RIFLE) {
+                    player.activeWeapon = WeaponType.RIFLE;
+                }
+                if (item.type === ItemType.WEAPON_SHOTGUN) {
+                    player.activeWeapon = WeaponType.SHOTGUN;
+                }
+                if (item.type === ItemType.WEAPON_SNIPER) {
+                    player.activeWeapon = WeaponType.SNIPER;
+                }
                 items.delete(itemId);
             }
         });
 
-        const dx = player.x - zone.x;
-        const dy = player.y - zone.y;
-        if (dx * dx + dy * dy > zone.radius * zone.radius && shouldApplyDamage && gamePhase === GamePhase.IN_GAME) {
+        const zoneDx = player.x - zone.x;
+        const zoneDy = player.y - zone.y;
+        if (zoneDx * zoneDx + zoneDy * zoneDy > zone.radius * zone.radius && shouldApplyDamage && gamePhase === GamePhase.IN_GAME) {
             player.health -= GAME_CONFIG.ZONE_DAMAGE;
             if (player.health <= 0) {
                 player.isDead = true;
@@ -337,42 +382,48 @@ function gameLoop(): void {
         }
     });
 
-    projectiles.forEach((proj, id) => {
-        const step = proj.speed * deltaTime;
-        proj.x += Math.cos(proj.angle) * step;
-        proj.y += Math.sin(proj.angle) * step;
-        proj.traveledDistance += step;
+    projectiles.forEach((projectile, id) => {
+        const step = projectile.speed * deltaTime;
+        projectile.x += Math.cos(projectile.angle) * step;
+        projectile.y += Math.sin(projectile.angle) * step;
+        projectile.traveledDistance += step;
 
         if (
-            proj.x < 0 || proj.x > GAME_CONFIG.WORLD_WIDTH ||
-            proj.y < 0 || proj.y > GAME_CONFIG.WORLD_HEIGHT ||
-            proj.traveledDistance > proj.maxRange
+            projectile.x < 0 ||
+            projectile.x > GAME_CONFIG.WORLD_WIDTH ||
+            projectile.y < 0 ||
+            projectile.y > GAME_CONFIG.WORLD_HEIGHT ||
+            projectile.traveledDistance > projectile.maxRange
         ) {
             projectiles.delete(id);
             return;
         }
 
-        if (!proj.canPassThroughObstacles && checkCollision(proj.x, proj.y, 4)) {
-            io.emit(MessageType.EFFECT_EVENT, { x: proj.x, y: proj.y, type: EffectType.SPARKS });
+        if (!projectile.canPassThroughObstacles && checkCollision(projectile.x, projectile.y, 4)) {
+            io.emit(MessageType.EFFECT_EVENT, { x: projectile.x, y: projectile.y, type: EffectType.SPARKS });
             projectiles.delete(id);
             return;
         }
 
-        players.forEach((p, pid) => {
-            if (pid === proj.ownerId || p.isDead) return;
-            const dx = proj.x - p.x;
-            const dy = proj.y - p.y;
+        players.forEach((player, playerId) => {
+            if (playerId === projectile.ownerId || player.isDead) {
+                return;
+            }
+
+            const dx = projectile.x - player.x;
+            const dy = projectile.y - player.y;
             const hitRadius = (GAME_CONFIG.PLAYER_SIZE + GAME_CONFIG.PROJECTILE_SIZE) / 2;
             if (dx * dx + dy * dy < hitRadius * hitRadius) {
-                p.health -= proj.damage;
-                io.emit(MessageType.EFFECT_EVENT, { x: proj.x, y: proj.y, type: EffectType.BLOOD });
+                player.health -= projectile.damage;
+                io.emit(MessageType.EFFECT_EVENT, { x: projectile.x, y: projectile.y, type: EffectType.BLOOD });
                 projectiles.delete(id);
-                if (p.health <= 0) {
-                    p.isDead = true;
-                    const killer = players.get(proj.ownerId);
+
+                if (player.health <= 0) {
+                    player.isDead = true;
+                    const killer = players.get(projectile.ownerId);
                     if (killer) {
                         killer.kills++;
-                        broadcastKill(proj.ownerId, pid, killer.activeWeapon);
+                        broadcastKill(projectile.ownerId, playerId, killer.activeWeapon);
                     }
                 }
             }
@@ -382,7 +433,8 @@ function gameLoop(): void {
     io.emit(MessageType.GAME_STATE, getGameState());
 }
 
-const PORT = parseInt(process.env.PORT || '9208');
-io.listen(PORT);
-console.log(`🎮 Game server running on port ${PORT}`);
+const PORT = Number.parseInt(process.env.PORT || '9208', 10);
+httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`🎮 Game server running on port ${PORT}`);
+});
 setInterval(gameLoop, tickInterval);

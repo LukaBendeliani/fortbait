@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import geckos, { ClientChannel } from '@geckos.io/client';
+import { io, Socket } from 'socket.io-client';
 import {
     GAME_CONFIG,
     MessageType,
@@ -25,7 +25,7 @@ type AutomationWindow = Window & {
 const DEFAULT_INPUT: InputState = { up: false, down: false, left: false, right: false, angle: 0 };
 
 export class GameScene extends Phaser.Scene {
-    private channel!: ClientChannel;
+    private socket: Socket | null = null;
     private playerId = '';
     private isConnected = false;
     private latestGameState: GameState | null = null;
@@ -178,8 +178,8 @@ export class GameScene extends Phaser.Scene {
         this.fKey = this.input.keyboard!.addKey('F');
 
         this.hKey.on('down', () => {
-            if (this.channel && this.playerId) {
-                this.channel.emit(MessageType.USE_ITEM, ItemType.MEDKIT);
+            if (this.socket && this.playerId) {
+                this.socket.emit(MessageType.USE_ITEM, ItemType.MEDKIT);
             }
         });
 
@@ -224,7 +224,7 @@ export class GameScene extends Phaser.Scene {
         });
     }
 
-    private getServerConnectionConfig() {
+    private getServerConnectionConfig(): { serverUrl: string; serverPort: number } {
         const envUrl = (import.meta.env.VITE_SERVER_URL || '').trim();
         const envPort = Number.parseInt(import.meta.env.VITE_SERVER_PORT || '', 10);
         const serverUrl = envUrl || window.location.hostname;
@@ -232,42 +232,67 @@ export class GameScene extends Phaser.Scene {
         return { serverUrl, serverPort };
     }
 
+    private buildSocketUrl(serverUrl: string, serverPort: number): string {
+        if (serverUrl.startsWith('http://') || serverUrl.startsWith('https://')) {
+            const parsed = new URL(serverUrl);
+            if (!parsed.port) {
+                const isDefaultHttps = parsed.protocol === 'https:' && serverPort === 443;
+                const isDefaultHttp = parsed.protocol === 'http:' && serverPort === 80;
+                if (!isDefaultHttps && !isDefaultHttp) {
+                    parsed.port = String(serverPort);
+                }
+            }
+            return parsed.toString();
+        }
+
+        const protocol = window.location.protocol;
+        const isDefaultHttps = protocol === 'https:' && serverPort === 443;
+        const isDefaultHttp = protocol === 'http:' && serverPort === 80;
+        const includePort = !isDefaultHttps && !isDefaultHttp;
+        return `${protocol}//${serverUrl}${includePort ? `:${serverPort}` : ''}`;
+    }
+
     private connectToServer(): void {
         const { serverUrl, serverPort } = this.getServerConnectionConfig();
-        const normalizedUrl = serverUrl.startsWith('http') ? serverUrl : `${window.location.protocol}//${serverUrl}`;
+        const socketUrl = this.buildSocketUrl(serverUrl, serverPort);
 
         this.connectionText.setText('Connecting...').setVisible(true);
-        this.channel = geckos({ url: normalizedUrl, port: serverPort });
-
-        this.channel.onConnect((error) => {
-            if (error) {
-                this.isConnected = false;
-                this.connectionText.setText('Connection Failed').setVisible(true);
-                return;
-            }
-
-            this.isConnected = true;
-            this.connectionText.setVisible(false);
-
-            this.channel.on(MessageType.WELCOME, (data: unknown) => {
-                const welcome = data as WelcomeMessage;
-                this.playerId = welcome.playerId;
-                this.latestGameState = welcome.gameState;
-                this.updateObstacles(welcome.gameState.obstacles);
-                Object.values(welcome.gameState.players).forEach((player) => this.createPlayerSprite(player));
-            });
-            this.channel.on(MessageType.PLAYER_JOIN, (data: unknown) => this.createPlayerSprite(data as PlayerState));
-            this.channel.on(MessageType.PLAYER_LEAVE, (data: unknown) => this.removePlayerSprite((data as { id: string }).id));
-            this.channel.on(MessageType.GAME_STATE, (data: unknown) => this.updateGameState(data as GameState));
-            this.channel.on(MessageType.KILL_LOG, (data: unknown) => this.addKillLog(data as KillLogEntry));
-            this.channel.on(MessageType.EFFECT_EVENT, (data: unknown) => this.triggerEffect(data as EffectState));
+        this.socket = io(socketUrl, {
+            autoConnect: false,
+            transports: ['websocket', 'polling'],
         });
 
-        this.channel.onDisconnect(() => {
+        this.socket.on('connect', () => {
+            this.isConnected = true;
+            this.connectionText.setVisible(false);
+        });
+
+        this.socket.on('connect_error', () => {
+            this.isConnected = false;
+            this.connectionText.setText('Connection Failed').setVisible(true);
+        });
+
+        this.socket.on(MessageType.WELCOME, (data: unknown) => {
+            const welcome = data as WelcomeMessage;
+            this.playerId = welcome.playerId;
+            this.latestGameState = welcome.gameState;
+            this.updateObstacles(welcome.gameState.obstacles);
+            Object.values(welcome.gameState.players).forEach((player) => this.createPlayerSprite(player));
+        });
+
+        this.socket.on(MessageType.PLAYER_JOIN, (data: unknown) => this.createPlayerSprite(data as PlayerState));
+        this.socket.on(MessageType.PLAYER_LEAVE, (data: unknown) => this.removePlayerSprite((data as { id: string }).id));
+        this.socket.on(MessageType.GAME_STATE, (data: unknown) => this.updateGameState(data as GameState));
+        this.socket.on(MessageType.KILL_LOG, (data: unknown) => this.addKillLog(data as KillLogEntry));
+        this.socket.on(MessageType.EFFECT_EVENT, (data: unknown) => this.triggerEffect(data as EffectState));
+
+        this.socket.on('disconnect', () => {
             this.isConnected = false;
             this.latestGameState = null;
             this.connectionText.setText('Disconnected').setVisible(true);
         });
+
+        this.socket.connect();
     }
 
     private addKillLog(entry: KillLogEntry) {
@@ -303,7 +328,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     private shoot(targetX: number, targetY: number): void {
-        if (!this.channel || !this.playerId) {
+        if (!this.socket || !this.playerId) {
             return;
         }
 
@@ -313,7 +338,7 @@ export class GameScene extends Phaser.Scene {
         }
 
         const worldPoint = this.cameras.main.getWorldPoint(targetX, targetY);
-        this.channel.emit(MessageType.SHOOT, Phaser.Math.Angle.Between(sprite.x, sprite.y, worldPoint.x, worldPoint.y));
+        this.socket.emit(MessageType.SHOOT, Phaser.Math.Angle.Between(sprite.x, sprite.y, worldPoint.x, worldPoint.y));
     }
 
     private triggerEffect(effect: EffectState) {
@@ -651,8 +676,8 @@ export class GameScene extends Phaser.Scene {
 
         if (inputChanged) {
             this.lastInput = { ...input };
-            if (this.channel && this.playerId) {
-                this.channel.emit(MessageType.PLAYER_INPUT, input);
+            if (this.socket && this.playerId) {
+                this.socket.emit(MessageType.PLAYER_INPUT, input);
             }
         }
 
