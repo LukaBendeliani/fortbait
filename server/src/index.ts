@@ -12,6 +12,7 @@ import {
     ItemType,
     GamePhase,
     ObstacleState,
+    PlayerStanding,
     WeaponType,
     WEAPON_CONFIG,
     KillLogEntry,
@@ -23,6 +24,7 @@ const playerInputs: Map<string, InputState> = new Map();
 const projectiles: Map<string, ProjectileState> = new Map();
 const items: Map<string, ItemState> = new Map();
 const lastShotTime: Map<string, number> = new Map();
+const activeMatchParticipants: Map<string, PlayerStanding> = new Map();
 const obstacles: ObstacleState[] = [];
 let gamePhase: GamePhase = GamePhase.LOBBY;
 let phaseTimer = 0;
@@ -38,6 +40,15 @@ let projectileIdCounter = 0;
 let itemIdCounter = 0;
 
 const DEFAULT_INPUT: InputState = { up: false, down: false, left: false, right: false, angle: 0 };
+
+function sanitizePlayerName(name: string | null | undefined): string {
+    const raw = (name || '').trim();
+    const normalized = raw.replace(/\s+/g, ' ').slice(0, 18);
+    if (!normalized) {
+        return '';
+    }
+    return normalized;
+}
 
 function initObstacles(): void {
     for (let i = 0; i < 100; i++) {
@@ -89,10 +100,13 @@ function randomColor(): number {
     return colors[Math.floor(Math.random() * colors.length)];
 }
 
-function createPlayer(id: string): PlayerState {
+function createPlayer(id: string, requestedName?: string): PlayerState {
     const spawn = findValidSpawn();
+    const fallbackName = `Player-${id.slice(0, 4)}`;
+    const name = sanitizePlayerName(requestedName) || fallbackName;
     return {
         id,
+        name,
         x: spawn.x,
         y: spawn.y,
         angle: 0,
@@ -107,6 +121,31 @@ function createPlayer(id: string): PlayerState {
             ammo: 100,
         },
     };
+}
+
+function getStandings(): PlayerStanding[] {
+    return Array.from(players.values())
+        .map((player) => ({
+            id: player.id,
+            name: player.name,
+            kills: player.kills,
+            isDead: player.isDead,
+        }))
+        .sort((left, right) => {
+            if (right.kills !== left.kills) {
+                return right.kills - left.kills;
+            }
+            return left.name.localeCompare(right.name);
+        });
+}
+
+function getActiveMatchStandings(): PlayerStanding[] {
+    return Array.from(activeMatchParticipants.values()).sort((left, right) => {
+        if (right.kills !== left.kills) {
+            return right.kills - left.kills;
+        }
+        return left.name.localeCompare(right.name);
+    });
 }
 
 function spawnItems(): void {
@@ -134,8 +173,13 @@ function getGameState(): GameState {
         playersObj[id] = player;
     });
 
+    const standings = gamePhase === GamePhase.GAME_OVER
+        ? getActiveMatchStandings()
+        : getStandings();
+
     return {
         players: playersObj,
+        standings,
         projectiles: Array.from(projectiles.values()),
         items: Array.from(items.values()),
         obstacles,
@@ -207,6 +251,19 @@ io.on('connection', (socket: Socket) => {
         playerInputs.set(playerId, data);
     });
 
+    socket.on(MessageType.SET_NAME, (requestedName: string) => {
+        const playerState = players.get(playerId);
+        if (!playerState) {
+            return;
+        }
+
+        const sanitized = sanitizePlayerName(requestedName);
+        if (!sanitized) {
+            return;
+        }
+        playerState.name = sanitized;
+    });
+
     socket.on(MessageType.SHOOT, (angle: number) => {
         const playerState = players.get(playerId);
         if (!playerState || playerState.isDead || gamePhase !== GamePhase.IN_GAME) {
@@ -269,6 +326,18 @@ io.on('connection', (socket: Socket) => {
     });
 
     socket.on('disconnect', () => {
+        if (gamePhase === GamePhase.IN_GAME || gamePhase === GamePhase.GAME_OVER) {
+            const participant = activeMatchParticipants.get(playerId);
+            const player = players.get(playerId);
+            if (participant && player) {
+                participant.kills = player.kills;
+                participant.name = player.name;
+                participant.isDead = true;
+            }
+        } else {
+            activeMatchParticipants.delete(playerId);
+        }
+
         players.delete(playerId);
         playerInputs.delete(playerId);
         lastShotTime.delete(playerId);
@@ -305,10 +374,17 @@ function gameLoop(): void {
         phaseTimer -= deltaTime;
         if (phaseTimer <= 0) {
             gamePhase = GamePhase.IN_GAME;
+            activeMatchParticipants.clear();
             players.forEach((player) => {
                 player.isDead = false;
                 player.health = 100;
                 player.kills = 0;
+                activeMatchParticipants.set(player.id, {
+                    id: player.id,
+                    name: player.name,
+                    kills: 0,
+                    isDead: false,
+                });
             });
         }
     } else if (gamePhase === GamePhase.IN_GAME) {
@@ -325,8 +401,9 @@ function gameLoop(): void {
             gamePhase = GamePhase.LOBBY;
             items.clear();
             projectiles.clear();
+            activeMatchParticipants.clear();
             players.forEach((player) => {
-                const respawn = createPlayer(player.id);
+                const respawn = createPlayer(player.id, player.name);
                 Object.assign(player, respawn);
             });
         }
@@ -342,6 +419,12 @@ function gameLoop(): void {
 
     players.forEach((player, id) => {
         if (player.isDead) {
+            const participant = activeMatchParticipants.get(id);
+            if (participant) {
+                participant.kills = player.kills;
+                participant.name = player.name;
+                participant.isDead = true;
+            }
             return;
         }
 
@@ -377,8 +460,19 @@ function gameLoop(): void {
             player.health -= GAME_CONFIG.ZONE_DAMAGE;
             if (player.health <= 0) {
                 player.isDead = true;
+                const participant = activeMatchParticipants.get(id);
+                if (participant) {
+                    participant.isDead = true;
+                }
                 broadcastKill('ZONE', id, 'ZONE');
             }
+        }
+
+        const participant = activeMatchParticipants.get(id);
+        if (participant) {
+            participant.kills = player.kills;
+            participant.name = player.name;
+            participant.isDead = player.isDead;
         }
     });
 
@@ -420,9 +514,18 @@ function gameLoop(): void {
 
                 if (player.health <= 0) {
                     player.isDead = true;
+                    const victimParticipant = activeMatchParticipants.get(playerId);
+                    if (victimParticipant) {
+                        victimParticipant.isDead = true;
+                    }
                     const killer = players.get(projectile.ownerId);
                     if (killer) {
                         killer.kills++;
+                        const killerParticipant = activeMatchParticipants.get(projectile.ownerId);
+                        if (killerParticipant) {
+                            killerParticipant.kills = killer.kills;
+                            killerParticipant.name = killer.name;
+                        }
                         broadcastKill(projectile.ownerId, playerId, killer.activeWeapon);
                     }
                 }
