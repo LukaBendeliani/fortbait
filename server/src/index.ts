@@ -51,7 +51,14 @@ function sanitizePlayerName(name: string | null | undefined): string {
 }
 
 function initObstacles(): void {
-    for (let i = 0; i < 100; i++) {
+    obstacles.length = 0;
+
+    const baseArea = 2500 * 1900;
+    const baseObstacleCount = 100;
+    const areaScale = (GAME_CONFIG.WORLD_WIDTH * GAME_CONFIG.WORLD_HEIGHT) / baseArea;
+    const obstacleCount = Math.max(baseObstacleCount, Math.round(baseObstacleCount * areaScale));
+
+    for (let i = 0; i < obstacleCount; i++) {
         obstacles.push({
             x: 100 + Math.random() * (GAME_CONFIG.WORLD_WIDTH - 300),
             y: 100 + Math.random() * (GAME_CONFIG.WORLD_HEIGHT - 300),

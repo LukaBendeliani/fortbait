@@ -1,16 +1,16 @@
 // Game constants
 export const GAME_CONFIG = {
     TICK_RATE: 60,
-    WORLD_WIDTH: 3600,
-    WORLD_HEIGHT: 2700,
+    WORLD_WIDTH: 3200,
+    WORLD_HEIGHT: 2432,
     PLAYER_SIZE: 32,
     PLAYER_SPEED: 250,
-    ZONE_INITIAL_RADIUS: 1700,
+    ZONE_INITIAL_RADIUS: 1536,
     ZONE_SHRINK_RATE: 5,
     ZONE_DAMAGE: 10, // damage per second
     PROJECTILE_SIZE: 8,
     ITEM_SIZE: 16,
-    MAX_ITEMS: 60,
+    MAX_ITEMS: 77,
     LOBBY_MIN_PLAYERS: 2,
     COUNTDOWN_DURATION: 10, // seconds
     GAME_OVER_DURATION: 5, // seconds

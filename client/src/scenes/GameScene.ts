@@ -30,27 +30,65 @@ type SheetRect = {
     height: number;
 };
 
+type CharacterParts = {
+    top: SheetRect;
+    mid: SheetRect;
+    bottom: SheetRect;
+};
+
 const DEFAULT_INPUT: InputState = { up: false, down: false, left: false, right: false, angle: 0 };
 const PLAYER_NAME_STORAGE_KEY = 'fortbait.playerName';
 const MAX_PLAYER_NAME_LENGTH = 18;
-const LAPL_PLAYER_SKIN_RECTS: SheetRect[] = [
-    { x: 270, y: 130, width: 164, height: 164 },
-    { x: 1187, y: 130, width: 165, height: 164 },
-    { x: 2187, y: 130, width: 165, height: 164 },
-    { x: 3187, y: 130, width: 165, height: 164 },
-    { x: 267, y: 1194, width: 165, height: 165 },
-    { x: 1186, y: 1203, width: 164, height: 164 },
-    { x: 2187, y: 1194, width: 165, height: 165 },
-    { x: 3187, y: 1194, width: 165, height: 165 },
+const LAPL_CHARACTER_PARTS: CharacterParts[] = [
+    {
+        top: { x: 53, y: 146, width: 198, height: 132 },
+        mid: { x: 270, y: 130, width: 164, height: 164 },
+        bottom: { x: 53, y: 299, width: 198, height: 76 },
+    },
+    {
+        top: { x: 971, y: 146, width: 197, height: 132 },
+        mid: { x: 1187, y: 130, width: 165, height: 164 },
+        bottom: { x: 973, y: 301, width: 197, height: 74 },
+    },
+    {
+        top: { x: 1971, y: 146, width: 197, height: 132 },
+        mid: { x: 2187, y: 130, width: 165, height: 164 },
+        bottom: { x: 1971, y: 300, width: 197, height: 75 },
+    },
+    {
+        top: { x: 2971, y: 146, width: 197, height: 132 },
+        mid: { x: 3187, y: 130, width: 165, height: 164 },
+        bottom: { x: 2971, y: 299, width: 197, height: 76 },
+    },
+    {
+        top: { x: 51, y: 1210, width: 197, height: 132 },
+        mid: { x: 267, y: 1194, width: 165, height: 165 },
+        bottom: { x: 53, y: 1365, width: 197, height: 105 },
+    },
+    {
+        top: { x: 969, y: 1219, width: 198, height: 132 },
+        mid: { x: 1186, y: 1203, width: 164, height: 164 },
+        bottom: { x: 969, y: 1372, width: 198, height: 105 },
+    },
+    {
+        top: { x: 1967, y: 1206, width: 205, height: 140 },
+        mid: { x: 2187, y: 1194, width: 165, height: 165 },
+        bottom: { x: 1971, y: 1365, width: 197, height: 105 },
+    },
+    {
+        top: { x: 2971, y: 1210, width: 197, height: 132 },
+        mid: { x: 3187, y: 1194, width: 165, height: 165 },
+        bottom: { x: 2971, y: 1363, width: 197, height: 105 },
+    },
 ];
 const LAPL_FLOOR_RECT: SheetRect = { x: 0, y: 512, width: 256, height: 256 };
 const LAPL_OBSTACLE_RECT: SheetRect = { x: 0, y: 1536, width: 256, height: 256 };
 const LAPL_MEDKIT_RECT: SheetRect = { x: 0, y: 1280, width: 256, height: 256 };
 const LAPL_AMMO_RECT: SheetRect = { x: 256, y: 1280, width: 256, height: 256 };
 const LAPL_PISTOL_RECT: SheetRect = { x: 768, y: 588, width: 58, height: 117 };
-const LAPL_RIFLE_RECT: SheetRect = { x: 130, y: 576, width: 60, height: 134 };
-const LAPL_SHOTGUN_RECT: SheetRect = { x: 1113, y: 459, width: 68, height: 336 };
-const LAPL_SNIPER_RECT: SheetRect = { x: 1479, y: 445, width: 71, height: 365 };
+const LAPL_SNIPER_RECT: SheetRect = { x: 130, y: 576, width: 60, height: 134 };
+const LAPL_SHOTGUN_RECT: SheetRect = { x: 1479, y: 445, width: 71, height: 365 };
+const LAPL_RIFLE_RECT: SheetRect = { x: 1113, y: 459, width: 68, height: 336 };
 
 export class GameScene extends Phaser.Scene {
     private socket: Socket | null = null;
@@ -92,7 +130,7 @@ export class GameScene extends Phaser.Scene {
     private lastHealth = 100;
     private lastLocalSample: { x: number; y: number; t: number } | null = null;
     private localVelocity = { x: 0, y: 0 };
-    private readonly minimapSize = 150;
+    private readonly minimapSize = 300;
 
     private hasSubmittedName = false;
     private pendingPlayerName = '';
@@ -106,6 +144,24 @@ export class GameScene extends Phaser.Scene {
     private gameOverOverlayEl: HTMLDivElement | null = null;
     private gameOverTitleEl: HTMLDivElement | null = null;
     private gameOverListEl: HTMLUListElement | null = null;
+
+    private getOverlayHost(): HTMLElement {
+        const fullscreenElement = document.fullscreenElement as HTMLElement | null;
+        if (fullscreenElement) {
+            return fullscreenElement;
+        }
+        return document.body;
+    }
+
+    private ensureOverlayHost(): void {
+        const host = this.getOverlayHost();
+        if (this.lobbyOverlayEl && this.lobbyOverlayEl.parentElement !== host) {
+            host.appendChild(this.lobbyOverlayEl);
+        }
+        if (this.gameOverOverlayEl && this.gameOverOverlayEl.parentElement !== host) {
+            host.appendChild(this.gameOverOverlayEl);
+        }
+    }
 
     private isTextInputFocused(): boolean {
         const active = document.activeElement as HTMLElement | null;
@@ -143,7 +199,7 @@ export class GameScene extends Phaser.Scene {
             .setZoom(this.minimapSize / GAME_CONFIG.WORLD_WIDTH)
             .setName('minimap')
             .setBackgroundColor(0x000000)
-            .setAlpha(0.82)
+            .setAlpha(0.45)
             .setBounds(0, 0, GAME_CONFIG.WORLD_WIDTH, GAME_CONFIG.WORLD_HEIGHT);
 
         this.prepareLaplasTextures();
@@ -224,13 +280,13 @@ export class GameScene extends Phaser.Scene {
 
         this.cursors = this.input.keyboard!.createCursorKeys();
         this.wasd = {
-            W: this.input.keyboard!.addKey('W'),
-            A: this.input.keyboard!.addKey('A'),
-            S: this.input.keyboard!.addKey('S'),
-            D: this.input.keyboard!.addKey('D'),
+            W: this.input.keyboard!.addKey('W', false),
+            A: this.input.keyboard!.addKey('A', false),
+            S: this.input.keyboard!.addKey('S', false),
+            D: this.input.keyboard!.addKey('D', false),
         };
-        this.spaceKey = this.input.keyboard!.addKey('SPACE');
-        this.hKey = this.input.keyboard!.addKey('H');
+        this.spaceKey = this.input.keyboard!.addKey('SPACE', false);
+        this.hKey = this.input.keyboard!.addKey('H', false);
         this.fKey = this.input.keyboard!.addKey('F', false);
 
         this.hKey.on('down', () => {
@@ -246,6 +302,8 @@ export class GameScene extends Phaser.Scene {
             this.toggleFullscreen();
         });
         this.scale.on(Phaser.Scale.Events.RESIZE, this.handleResize, this);
+        this.scale.on(Phaser.Scale.Events.ENTER_FULLSCREEN, this.ensureOverlayHost, this);
+        this.scale.on(Phaser.Scale.Events.LEAVE_FULLSCREEN, this.ensureOverlayHost, this);
 
         this.createLobbyOverlay();
         this.createGameOverOverlay();
@@ -254,6 +312,8 @@ export class GameScene extends Phaser.Scene {
 
         this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
             this.scale.off(Phaser.Scale.Events.RESIZE, this.handleResize, this);
+            this.scale.off(Phaser.Scale.Events.ENTER_FULLSCREEN, this.ensureOverlayHost, this);
+            this.scale.off(Phaser.Scale.Events.LEAVE_FULLSCREEN, this.ensureOverlayHost, this);
             this.unregisterAutomationHooks();
             this.zoneMaskGraphics?.destroy();
             this.destroyDomOverlays();
@@ -330,9 +390,63 @@ export class GameScene extends Phaser.Scene {
         canvas.refresh();
     }
 
+    private createFullCharacterTexture(targetKey: string, parts: CharacterParts): void {
+        if (this.textures.exists(targetKey)) {
+            return;
+        }
+
+        const canvasWidth = 220;
+        const canvasHeight = 220;
+        const sourceImage = this.textures.get('laplas_skins_sheet').getSourceImage() as HTMLImageElement | HTMLCanvasElement;
+        const canvas = this.textures.createCanvas(targetKey, canvasWidth, canvasHeight);
+        if (!canvas) {
+            return;
+        }
+
+        const context = canvas.getContext();
+        context.clearRect(0, 0, canvasWidth, canvasHeight);
+
+        // Draw from back to front for a compact full-body character.
+        context.drawImage(
+            sourceImage,
+            parts.bottom.x,
+            parts.bottom.y,
+            parts.bottom.width,
+            parts.bottom.height,
+            46,
+            146,
+            128,
+            62
+        );
+        context.drawImage(
+            sourceImage,
+            parts.mid.x,
+            parts.mid.y,
+            parts.mid.width,
+            parts.mid.height,
+            64,
+            72,
+            92,
+            92
+        );
+        context.drawImage(
+            sourceImage,
+            parts.top.x,
+            parts.top.y,
+            parts.top.width,
+            parts.top.height,
+            46,
+            20,
+            128,
+            86
+        );
+
+        canvas.refresh();
+    }
+
     private prepareLaplasTextures(): void {
-        LAPL_PLAYER_SKIN_RECTS.forEach((rect, index) => {
-            this.createSubTextureFromSheet('laplas_skins_sheet', `laplas_player_${index}`, rect);
+        LAPL_CHARACTER_PARTS.forEach((parts, index) => {
+            this.createFullCharacterTexture(`laplas_player_${index}`, parts);
         });
 
         this.createSubTextureFromSheet('laplas_tiles_sheet', 'laplas_floor', LAPL_FLOOR_RECT);
@@ -499,7 +613,7 @@ export class GameScene extends Phaser.Scene {
         this.joinedPlayersListEl = playersList;
 
         wrapper.appendChild(panel);
-        document.body.appendChild(wrapper);
+        this.getOverlayHost().appendChild(wrapper);
         this.lobbyOverlayEl = wrapper;
     }
 
@@ -549,7 +663,7 @@ export class GameScene extends Phaser.Scene {
         this.gameOverListEl = list;
 
         wrapper.appendChild(panel);
-        document.body.appendChild(wrapper);
+        this.getOverlayHost().appendChild(wrapper);
         this.gameOverOverlayEl = wrapper;
     }
 
@@ -845,7 +959,7 @@ export class GameScene extends Phaser.Scene {
         for (let i = 0; i < id.length; i++) {
             hash = id.charCodeAt(i) + ((hash << 5) - hash);
         }
-        return `laplas_player_${Math.abs(hash) % LAPL_PLAYER_SKIN_RECTS.length}`;
+        return `laplas_player_${Math.abs(hash) % LAPL_CHARACTER_PARTS.length}`;
     }
 
     private createPlayerSprite(player: PlayerState): void {
@@ -855,7 +969,7 @@ export class GameScene extends Phaser.Scene {
 
         const skin = this.getSkinForPlayer(player.id);
         const sprite = this.add.sprite(player.x, player.y, skin).setOrigin(0.5);
-        this.scaleSpriteToMaxSize(sprite, 34);
+        this.scaleSpriteToMaxSize(sprite, 46);
         const label = this.add.text(player.x, player.y - 35, this.getLabelText(player), { fontSize: '12px' }).setOrigin(0.5);
         const healthBar = this.add.graphics();
 
