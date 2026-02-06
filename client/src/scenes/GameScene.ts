@@ -4,6 +4,7 @@ import {
     GAME_CONFIG,
     MessageType,
     PlayerState,
+    PlayerStanding,
     GameState,
     InputState,
     WelcomeMessage,
@@ -23,18 +24,21 @@ type AutomationWindow = Window & {
 };
 
 const DEFAULT_INPUT: InputState = { up: false, down: false, left: false, right: false, angle: 0 };
+const PLAYER_NAME_STORAGE_KEY = 'fortbait.playerName';
+const MAX_PLAYER_NAME_LENGTH = 18;
 
 export class GameScene extends Phaser.Scene {
     private socket: Socket | null = null;
     private playerId = '';
     private isConnected = false;
     private latestGameState: GameState | null = null;
+    private latestStandings: PlayerStanding[] = [];
 
     private playerSprites: Map<string, Phaser.GameObjects.Sprite> = new Map();
     private playerLabels: Map<string, Phaser.GameObjects.Text> = new Map();
     private healthBars: Map<string, Phaser.GameObjects.Graphics> = new Map();
     private itemSprites: Map<string, Phaser.GameObjects.Sprite> = new Map();
-    private obstacleSprites: Phaser.GameObjects.Sprite[] = [];
+    private obstacleRects: Phaser.GameObjects.Rectangle[] = [];
 
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
     private wasd!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key };
@@ -63,6 +67,37 @@ export class GameScene extends Phaser.Scene {
     private localVelocity = { x: 0, y: 0 };
     private readonly minimapSize = 150;
 
+    private hasSubmittedName = false;
+    private pendingPlayerName = '';
+
+    private lobbyOverlayEl: HTMLDivElement | null = null;
+    private lobbyStatusEl: HTMLDivElement | null = null;
+    private nameInputEl: HTMLInputElement | null = null;
+    private nameControlsEl: HTMLDivElement | null = null;
+    private joinedPlayersListEl: HTMLUListElement | null = null;
+
+    private gameOverOverlayEl: HTMLDivElement | null = null;
+    private gameOverTitleEl: HTMLDivElement | null = null;
+    private gameOverListEl: HTMLUListElement | null = null;
+
+    private isTextInputFocused(): boolean {
+        const active = document.activeElement as HTMLElement | null;
+        if (!active) {
+            return false;
+        }
+
+        const tag = active.tagName;
+        return tag === 'INPUT' || tag === 'TEXTAREA' || active.isContentEditable;
+    }
+
+    private isLobbyVisible(): boolean {
+        return Boolean(this.lobbyOverlayEl && this.lobbyOverlayEl.style.display !== 'none');
+    }
+
+    private shouldBlockGameplayHotkeys(): boolean {
+        return this.isLobbyVisible() || this.isTextInputFocused();
+    }
+
     constructor() {
         super({ key: 'GameScene' });
     }
@@ -86,6 +121,8 @@ export class GameScene extends Phaser.Scene {
             .setBackgroundColor(0x000000)
             .setAlpha(0.82)
             .setBounds(0, 0, GAME_CONFIG.WORLD_WIDTH, GAME_CONFIG.WORLD_HEIGHT);
+
+        this.createBackground();
 
         this.connectionText = this.add.text(width / 2, height / 2, 'Connecting...', { fontSize: '24px', color: '#4ecdc4' })
             .setOrigin(0.5)
@@ -122,13 +159,6 @@ export class GameScene extends Phaser.Scene {
             .setScrollFactor(0);
 
         this.projectileGraphics = this.add.graphics();
-
-        this.add.tileSprite(0, 0, GAME_CONFIG.WORLD_WIDTH, GAME_CONFIG.WORLD_HEIGHT, 'tiles', 0)
-            .setOrigin(0, 0)
-            .setDepth(-1)
-            .setAlpha(0.85)
-            .setTint(0x88aa88);
-
         this.zoneGraphics = this.add.graphics();
         this.createPixelTexture();
 
@@ -175,23 +205,54 @@ export class GameScene extends Phaser.Scene {
         };
         this.spaceKey = this.input.keyboard!.addKey('SPACE');
         this.hKey = this.input.keyboard!.addKey('H');
-        this.fKey = this.input.keyboard!.addKey('F');
+        this.fKey = this.input.keyboard!.addKey('F', false);
 
         this.hKey.on('down', () => {
-            if (this.socket && this.playerId) {
+            if (this.socket && this.playerId && this.hasSubmittedName) {
                 this.socket.emit(MessageType.USE_ITEM, ItemType.MEDKIT);
             }
         });
 
-        this.fKey.on('down', () => this.toggleFullscreen());
+        this.fKey.on('down', () => {
+            if (this.shouldBlockGameplayHotkeys()) {
+                return;
+            }
+            this.toggleFullscreen();
+        });
         this.scale.on(Phaser.Scale.Events.RESIZE, this.handleResize, this);
+
+        this.createLobbyOverlay();
+        this.createGameOverOverlay();
+        this.updateLobbyOverlay();
+        this.updateGameOverOverlay();
+
         this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
             this.scale.off(Phaser.Scale.Events.RESIZE, this.handleResize, this);
             this.unregisterAutomationHooks();
+            this.destroyDomOverlays();
         });
 
         this.registerAutomationHooks();
         this.connectToServer();
+    }
+
+    private createBackground(): void {
+        this.add.rectangle(
+            GAME_CONFIG.WORLD_WIDTH / 2,
+            GAME_CONFIG.WORLD_HEIGHT / 2,
+            GAME_CONFIG.WORLD_WIDTH,
+            GAME_CONFIG.WORLD_HEIGHT,
+            0x2eaa6f
+        ).setDepth(-5);
+
+        this.add.rectangle(
+            GAME_CONFIG.WORLD_WIDTH / 2,
+            GAME_CONFIG.WORLD_HEIGHT / 2,
+            GAME_CONFIG.WORLD_WIDTH,
+            GAME_CONFIG.WORLD_HEIGHT,
+            0x173f35,
+            0.08
+        ).setDepth(-4);
     }
 
     private createPixelTexture() {
@@ -204,6 +265,215 @@ export class GameScene extends Phaser.Scene {
         graphics.fillRect(0, 0, 4, 4);
         graphics.generateTexture('pixel', 4, 4);
         graphics.destroy();
+    }
+
+    private sanitizePlayerName(input: string): string {
+        const compact = input.trim().replace(/\s+/g, ' ');
+        return compact.slice(0, MAX_PLAYER_NAME_LENGTH);
+    }
+
+    private createLobbyOverlay(): void {
+        const wrapper = document.createElement('div');
+        wrapper.style.position = 'fixed';
+        wrapper.style.inset = '0';
+        wrapper.style.display = 'flex';
+        wrapper.style.alignItems = 'center';
+        wrapper.style.justifyContent = 'center';
+        wrapper.style.pointerEvents = 'none';
+        wrapper.style.zIndex = '40';
+
+        const panel = document.createElement('div');
+        panel.style.width = 'min(520px, 90vw)';
+        panel.style.background = 'rgba(10, 28, 21, 0.92)';
+        panel.style.border = '1px solid rgba(136, 216, 176, 0.45)';
+        panel.style.borderRadius = '12px';
+        panel.style.padding = '18px';
+        panel.style.color = '#e6fff4';
+        panel.style.fontFamily = 'monospace';
+        panel.style.pointerEvents = 'auto';
+        panel.style.boxShadow = '0 20px 45px rgba(0, 0, 0, 0.35)';
+
+        const title = document.createElement('div');
+        title.textContent = 'FortBait Lobby';
+        title.style.fontSize = '24px';
+        title.style.fontWeight = '700';
+        title.style.marginBottom = '8px';
+        panel.appendChild(title);
+
+        const status = document.createElement('div');
+        status.style.fontSize = '14px';
+        status.style.opacity = '0.95';
+        status.style.marginBottom = '12px';
+        panel.appendChild(status);
+        this.lobbyStatusEl = status;
+
+        const controlsRow = document.createElement('div');
+        controlsRow.style.display = 'flex';
+        controlsRow.style.gap = '8px';
+        controlsRow.style.marginBottom = '14px';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.maxLength = MAX_PLAYER_NAME_LENGTH;
+        input.placeholder = 'Enter your name';
+        input.style.flex = '1';
+        input.style.padding = '10px';
+        input.style.borderRadius = '8px';
+        input.style.border = '1px solid rgba(136, 216, 176, 0.5)';
+        input.style.background = '#0f2f25';
+        input.style.color = '#e6fff4';
+        input.style.fontFamily = 'monospace';
+        input.style.fontSize = '14px';
+        const savedName = this.sanitizePlayerName(window.localStorage.getItem(PLAYER_NAME_STORAGE_KEY) || '');
+        input.value = savedName;
+        this.nameInputEl = input;
+
+        const submit = document.createElement('button');
+        submit.type = 'button';
+        submit.textContent = 'Join';
+        submit.style.padding = '10px 14px';
+        submit.style.border = 'none';
+        submit.style.borderRadius = '8px';
+        submit.style.background = '#43d18a';
+        submit.style.color = '#062012';
+        submit.style.fontWeight = '700';
+        submit.style.cursor = 'pointer';
+
+        submit.addEventListener('click', () => this.submitPlayerName());
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                this.submitPlayerName();
+            }
+        });
+        input.addEventListener('focus', () => {
+            if (this.input.keyboard) {
+                this.input.keyboard.enabled = false;
+            }
+        });
+        input.addEventListener('blur', () => {
+            if (this.input.keyboard) {
+                this.input.keyboard.enabled = true;
+            }
+        });
+
+        controlsRow.appendChild(input);
+        controlsRow.appendChild(submit);
+        panel.appendChild(controlsRow);
+        this.nameControlsEl = controlsRow;
+
+        const playersTitle = document.createElement('div');
+        playersTitle.textContent = 'Joined Players';
+        playersTitle.style.fontSize = '13px';
+        playersTitle.style.opacity = '0.8';
+        playersTitle.style.marginBottom = '8px';
+        panel.appendChild(playersTitle);
+
+        const playersList = document.createElement('ul');
+        playersList.style.margin = '0';
+        playersList.style.padding = '0 0 0 18px';
+        playersList.style.maxHeight = '180px';
+        playersList.style.overflowY = 'auto';
+        playersList.style.fontSize = '14px';
+        playersList.style.lineHeight = '1.5';
+        panel.appendChild(playersList);
+        this.joinedPlayersListEl = playersList;
+
+        wrapper.appendChild(panel);
+        document.body.appendChild(wrapper);
+        this.lobbyOverlayEl = wrapper;
+    }
+
+    private createGameOverOverlay(): void {
+        const wrapper = document.createElement('div');
+        wrapper.style.position = 'fixed';
+        wrapper.style.inset = '0';
+        wrapper.style.display = 'none';
+        wrapper.style.alignItems = 'center';
+        wrapper.style.justifyContent = 'center';
+        wrapper.style.pointerEvents = 'none';
+        wrapper.style.zIndex = '45';
+
+        const panel = document.createElement('div');
+        panel.style.width = 'min(540px, 92vw)';
+        panel.style.background = 'rgba(19, 20, 32, 0.92)';
+        panel.style.border = '1px solid rgba(229, 212, 160, 0.55)';
+        panel.style.borderRadius = '12px';
+        panel.style.padding = '18px';
+        panel.style.color = '#f3f0db';
+        panel.style.fontFamily = 'monospace';
+        panel.style.pointerEvents = 'auto';
+        panel.style.boxShadow = '0 24px 46px rgba(0, 0, 0, 0.38)';
+
+        const title = document.createElement('div');
+        title.style.fontSize = '24px';
+        title.style.fontWeight = '700';
+        title.style.marginBottom = '12px';
+        panel.appendChild(title);
+        this.gameOverTitleEl = title;
+
+        const subtitle = document.createElement('div');
+        subtitle.textContent = 'Players and kill count';
+        subtitle.style.fontSize = '13px';
+        subtitle.style.opacity = '0.85';
+        subtitle.style.marginBottom = '10px';
+        panel.appendChild(subtitle);
+
+        const list = document.createElement('ul');
+        list.style.margin = '0';
+        list.style.padding = '0 0 0 18px';
+        list.style.fontSize = '15px';
+        list.style.lineHeight = '1.65';
+        list.style.maxHeight = '220px';
+        list.style.overflowY = 'auto';
+        panel.appendChild(list);
+        this.gameOverListEl = list;
+
+        wrapper.appendChild(panel);
+        document.body.appendChild(wrapper);
+        this.gameOverOverlayEl = wrapper;
+    }
+
+    private destroyDomOverlays(): void {
+        this.lobbyOverlayEl?.remove();
+        this.gameOverOverlayEl?.remove();
+        this.lobbyOverlayEl = null;
+        this.gameOverOverlayEl = null;
+        this.lobbyStatusEl = null;
+        this.nameInputEl = null;
+        this.nameControlsEl = null;
+        this.joinedPlayersListEl = null;
+        this.gameOverTitleEl = null;
+        this.gameOverListEl = null;
+        if (this.input.keyboard) {
+            this.input.keyboard.enabled = true;
+        }
+    }
+
+    private submitPlayerName(): void {
+        if (!this.nameInputEl) {
+            return;
+        }
+
+        const sanitized = this.sanitizePlayerName(this.nameInputEl.value);
+        if (!sanitized) {
+            if (this.lobbyStatusEl) {
+                this.lobbyStatusEl.textContent = 'Enter a valid name first.';
+            }
+            return;
+        }
+
+        this.pendingPlayerName = sanitized;
+        this.hasSubmittedName = true;
+        window.localStorage.setItem(PLAYER_NAME_STORAGE_KEY, sanitized);
+        if (this.input.keyboard) {
+            this.input.keyboard.enabled = true;
+        }
+
+        if (this.socket && this.socket.connected) {
+            this.socket.emit(MessageType.SET_NAME, sanitized);
+        }
+
+        this.updateLobbyOverlay(this.latestGameState);
     }
 
     private toggleFullscreen(): void {
@@ -221,6 +491,78 @@ export class GameScene extends Phaser.Scene {
         this.controlsText.setPosition(10, gameSize.height - 10);
         this.killFeedTexts.forEach((entry, index) => {
             entry.setPosition(gameSize.width - 170, 170 + index * 20);
+        });
+    }
+
+    private updateLobbyOverlay(state: GameState | null = this.latestGameState): void {
+        if (!this.lobbyOverlayEl || !this.lobbyStatusEl || !this.joinedPlayersListEl) {
+            return;
+        }
+
+        const phase = state?.phase;
+        const show = !this.hasSubmittedName || !this.isConnected || phase === GamePhase.LOBBY || phase === GamePhase.COUNTDOWN;
+        this.lobbyOverlayEl.style.display = show ? 'flex' : 'none';
+
+        if (this.nameControlsEl) {
+            this.nameControlsEl.style.display = this.hasSubmittedName ? 'none' : 'flex';
+            if (this.hasSubmittedName && this.input.keyboard) {
+                this.input.keyboard.enabled = true;
+            }
+        }
+
+        if (!this.isConnected) {
+            this.lobbyStatusEl.textContent = 'Connecting to game server...';
+        } else if (!this.hasSubmittedName) {
+            this.lobbyStatusEl.textContent = 'Enter your name to join the lobby.';
+        } else if (phase === GamePhase.COUNTDOWN) {
+            this.lobbyStatusEl.textContent = `Starting in ${Math.max(0, state?.phaseTimer ?? 0)}...`;
+        } else if (phase === GamePhase.LOBBY) {
+            const joinedCount = state?.standings.length ?? 0;
+            this.lobbyStatusEl.textContent = `Waiting for players (${joinedCount}/${GAME_CONFIG.LOBBY_MIN_PLAYERS} minimum).`;
+        } else if (phase === GamePhase.IN_GAME) {
+            this.lobbyStatusEl.textContent = 'Match in progress.';
+        } else {
+            this.lobbyStatusEl.textContent = 'Connected.';
+        }
+
+        const standings = state?.standings ?? this.latestStandings;
+        this.joinedPlayersListEl.innerHTML = '';
+        if (!standings.length) {
+            const placeholder = document.createElement('li');
+            placeholder.textContent = 'No players joined yet.';
+            this.joinedPlayersListEl.appendChild(placeholder);
+            return;
+        }
+
+        standings.forEach((entry) => {
+            const line = document.createElement('li');
+            const isSelf = entry.id === this.playerId;
+            line.textContent = isSelf ? `${entry.name} (You)` : entry.name;
+            this.joinedPlayersListEl?.appendChild(line);
+        });
+    }
+
+    private updateGameOverOverlay(state: GameState | null = this.latestGameState): void {
+        if (!this.gameOverOverlayEl || !this.gameOverTitleEl || !this.gameOverListEl) {
+            return;
+        }
+
+        const show = Boolean(state && state.phase === GamePhase.GAME_OVER && !this.isLobbyVisible());
+        this.gameOverOverlayEl.style.display = show ? 'flex' : 'none';
+        if (!show || !state) {
+            return;
+        }
+
+        const winnerName = state.winnerId ? this.getPlayerName(state.winnerId) : 'No winner';
+        this.gameOverTitleEl.textContent = `Game Over - ${winnerName}`;
+
+        this.gameOverListEl.innerHTML = '';
+        const standings = state.standings.length ? state.standings : this.latestStandings;
+        standings.forEach((entry, index) => {
+            const line = document.createElement('li');
+            const suffix = entry.id === this.playerId ? ' (You)' : '';
+            line.textContent = `${index + 1}. ${entry.name}${suffix} - ${entry.kills} kill${entry.kills === 1 ? '' : 's'}`;
+            this.gameOverListEl?.appendChild(line);
         });
     }
 
@@ -265,19 +607,30 @@ export class GameScene extends Phaser.Scene {
         this.socket.on('connect', () => {
             this.isConnected = true;
             this.connectionText.setVisible(false);
+            if (this.hasSubmittedName && this.pendingPlayerName) {
+                this.socket?.emit(MessageType.SET_NAME, this.pendingPlayerName);
+            }
+            this.updateLobbyOverlay(this.latestGameState);
         });
 
         this.socket.on('connect_error', () => {
             this.isConnected = false;
             this.connectionText.setText('Connection Failed').setVisible(true);
+            this.updateLobbyOverlay(this.latestGameState);
         });
 
         this.socket.on(MessageType.WELCOME, (data: unknown) => {
             const welcome = data as WelcomeMessage;
             this.playerId = welcome.playerId;
             this.latestGameState = welcome.gameState;
+            this.latestStandings = welcome.gameState.standings;
             this.updateObstacles(welcome.gameState.obstacles);
             Object.values(welcome.gameState.players).forEach((player) => this.createPlayerSprite(player));
+            if (this.hasSubmittedName && this.pendingPlayerName) {
+                this.socket?.emit(MessageType.SET_NAME, this.pendingPlayerName);
+            }
+            this.updateLobbyOverlay(this.latestGameState);
+            this.updateGameOverOverlay(this.latestGameState);
         });
 
         this.socket.on(MessageType.PLAYER_JOIN, (data: unknown) => this.createPlayerSprite(data as PlayerState));
@@ -290,17 +643,29 @@ export class GameScene extends Phaser.Scene {
             this.isConnected = false;
             this.latestGameState = null;
             this.connectionText.setText('Disconnected').setVisible(true);
+            this.updateLobbyOverlay(this.latestGameState);
+            this.updateGameOverOverlay(this.latestGameState);
         });
 
         this.socket.connect();
     }
 
+    private getPlayerName(id: string): string {
+        if (id === 'ZONE') {
+            return 'ZONE';
+        }
+        return this.latestGameState?.players[id]?.name || id.slice(0, 4);
+    }
+
+    private getLabelText(player: PlayerState): string {
+        return player.id === this.playerId ? `${player.name} (YOU)` : player.name;
+    }
+
     private addKillLog(entry: KillLogEntry) {
         const { width } = this.scale;
-        const killer = entry.killerId === this.playerId ? 'YOU' : (entry.killerId === 'ZONE' ? 'ZONE' : entry.killerId.slice(0, 4));
-        const victim = entry.victimId === this.playerId ? 'YOU' : entry.victimId.slice(0, 4);
-        const weapon = entry.weapon.toUpperCase();
-        const feedLine = `${killer} [${weapon}] ${victim}`;
+        const killerName = entry.killerId === this.playerId ? 'YOU' : this.getPlayerName(entry.killerId);
+        const victimName = entry.victimId === this.playerId ? 'YOU' : this.getPlayerName(entry.victimId);
+        const feedLine = `${killerName} [${entry.weapon.toUpperCase()}] ${victimName}`;
 
         this.recentKillFeed.unshift(feedLine);
         this.recentKillFeed = this.recentKillFeed.slice(0, 8);
@@ -328,7 +693,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     private shoot(targetX: number, targetY: number): void {
-        if (!this.socket || !this.playerId) {
+        if (!this.socket || !this.playerId || !this.hasSubmittedName) {
             return;
         }
 
@@ -390,7 +755,7 @@ export class GameScene extends Phaser.Scene {
 
         const skin = this.getSkinForPlayer(player.id);
         const sprite = this.add.sprite(player.x, player.y, 'characters', skin).setOrigin(0.5);
-        const label = this.add.text(player.x, player.y - 35, player.id === this.playerId ? 'YOU' : player.id.slice(0, 4), { fontSize: '12px' }).setOrigin(0.5);
+        const label = this.add.text(player.x, player.y - 35, this.getLabelText(player), { fontSize: '12px' }).setOrigin(0.5);
         const healthBar = this.add.graphics();
 
         this.playerSprites.set(player.id, sprite);
@@ -413,23 +778,32 @@ export class GameScene extends Phaser.Scene {
     }
 
     private updateObstacles(obstacles: ObstacleState[]) {
-        this.obstacleSprites.forEach((sprite) => sprite.destroy());
-        this.obstacleSprites = [];
+        this.obstacleRects.forEach((rect) => rect.destroy());
+        this.obstacleRects = [];
         obstacles.forEach((obstacle) => {
-            const obstacleSprite = this.add.sprite(obstacle.x, obstacle.y, 'tiles', 14).setOrigin(0, 0).setDisplaySize(obstacle.width, obstacle.height);
-            this.obstacleSprites.push(obstacleSprite);
+            const rect = this.add.rectangle(
+                obstacle.x + obstacle.width / 2,
+                obstacle.y + obstacle.height / 2,
+                obstacle.width,
+                obstacle.height,
+                0xc67d4c
+            );
+            rect.setStrokeStyle(2, 0x8f552f, 0.95);
+            this.obstacleRects.push(rect);
         });
     }
 
     private updateGameState(state: GameState): void {
         this.latestGameState = state;
+        this.latestStandings = state.standings;
 
         if (state.phase === GamePhase.LOBBY) {
             this.phaseText.setText('WAITING FOR PLAYERS...');
         } else if (state.phase === GamePhase.COUNTDOWN) {
             this.phaseText.setText(`STARTING IN ${Math.max(0, state.phaseTimer)}`);
         } else if (state.phase === GamePhase.GAME_OVER) {
-            this.phaseText.setText(`WINNER: ${state.winnerId === this.playerId ? 'YOU!' : state.winnerId?.slice(0, 4) || 'NONE'}`);
+            const winner = state.winnerId ? this.getPlayerName(state.winnerId) : 'NONE';
+            this.phaseText.setText(`WINNER: ${state.winnerId === this.playerId ? 'YOU!' : winner}`);
         } else {
             this.phaseText.setText('');
         }
@@ -506,6 +880,7 @@ export class GameScene extends Phaser.Scene {
             }
 
             if (label) {
+                label.setText(this.getLabelText(player));
                 label.setPosition(player.x, player.y - 35);
             }
 
@@ -524,6 +899,9 @@ export class GameScene extends Phaser.Scene {
                 this.lastHealth = player.health;
             }
         });
+
+        this.updateLobbyOverlay(state);
+        this.updateGameOverOverlay(state);
     }
 
     private round(value: number): number {
@@ -561,6 +939,7 @@ export class GameScene extends Phaser.Scene {
         const localSprite = this.playerSprites.get(this.playerId);
         const players = state ? Object.values(state.players).map((player) => ({
             id: player.id,
+            name: player.name,
             x: this.round(player.x),
             y: this.round(player.y),
             angle: this.round(player.angle),
@@ -583,6 +962,7 @@ export class GameScene extends Phaser.Scene {
             },
             localPlayer: localPlayer ? {
                 id: localPlayer.id,
+                name: localPlayer.name,
                 x: this.round(localPlayer.x),
                 y: this.round(localPlayer.y),
                 angle: this.round(localPlayer.angle),
@@ -606,6 +986,13 @@ export class GameScene extends Phaser.Scene {
                 y: this.round(state.zone.y),
                 radius: this.round(state.zone.radius),
             } : null,
+            standings: state?.standings ?? [],
+            ui: {
+                lobbyVisible: this.lobbyOverlayEl?.style.display !== 'none',
+                gameOverVisible: this.gameOverOverlayEl?.style.display !== 'none',
+                hasSubmittedName: this.hasSubmittedName,
+                pendingPlayerName: this.pendingPlayerName,
+            },
             players,
             projectiles: state?.projectiles.slice(0, 24).map((projectile) => ({
                 ownerId: projectile.ownerId,
@@ -654,17 +1041,17 @@ export class GameScene extends Phaser.Scene {
         const localSprite = this.playerSprites.get(this.playerId);
         const angle = localSprite ? Phaser.Math.Angle.Between(localSprite.x, localSprite.y, worldPoint.x, worldPoint.y) : 0;
 
-        if (pointer.isDown || this.spaceKey.isDown) {
+        if (this.hasSubmittedName && (pointer.isDown || this.spaceKey.isDown)) {
             this.shoot(pointer.x, pointer.y);
         }
 
-        const input: InputState = {
+        const input: InputState = this.hasSubmittedName ? {
             up: this.cursors.up.isDown || this.wasd.W.isDown,
             down: this.cursors.down.isDown || this.wasd.S.isDown,
             left: this.cursors.left.isDown || this.wasd.A.isDown,
             right: this.cursors.right.isDown || this.wasd.D.isDown,
             angle,
-        };
+        } : { ...DEFAULT_INPUT };
 
         const inputChanged = (
             input.up !== this.lastInput.up ||

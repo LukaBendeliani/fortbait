@@ -77,6 +77,7 @@ export enum MessageType {
     PLAYER_JOIN = 'player_join',
     PLAYER_LEAVE = 'player_leave',
     PLAYER_INPUT = 'player_input',
+    SET_NAME = 'set_name',
     GAME_STATE = 'game_state',
     WELCOME = 'welcome',
     SHOOT = 'shoot',
@@ -160,6 +161,7 @@ export interface ProjectileState {
 // Player state
 export interface PlayerState {
     id: string;
+    name: string;
     x: number;
     y: number;
     angle: number;
@@ -175,6 +177,13 @@ export interface PlayerState {
     };
 }
 
+export interface PlayerStanding {
+    id: string;
+    name: string;
+    kills: number;
+    isDead: boolean;
+}
+
 // Input state from client
 export interface InputState {
     up: boolean;
@@ -187,6 +196,7 @@ export interface InputState {
 // Game state snapshot
 export interface GameState {
     players: Record<string, PlayerState>;
+    standings: PlayerStanding[];
     projectiles: ProjectileState[];
     items: ItemState[];
     obstacles: ObstacleState[];
