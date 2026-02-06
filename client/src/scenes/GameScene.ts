@@ -23,9 +23,34 @@ type AutomationWindow = Window & {
     advanceTime?: (ms: number) => Promise<void>;
 };
 
+type SheetRect = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+};
+
 const DEFAULT_INPUT: InputState = { up: false, down: false, left: false, right: false, angle: 0 };
 const PLAYER_NAME_STORAGE_KEY = 'fortbait.playerName';
 const MAX_PLAYER_NAME_LENGTH = 18;
+const LAPL_PLAYER_SKIN_RECTS: SheetRect[] = [
+    { x: 270, y: 130, width: 164, height: 164 },
+    { x: 1187, y: 130, width: 165, height: 164 },
+    { x: 2187, y: 130, width: 165, height: 164 },
+    { x: 3187, y: 130, width: 165, height: 164 },
+    { x: 267, y: 1194, width: 165, height: 165 },
+    { x: 1186, y: 1203, width: 164, height: 164 },
+    { x: 2187, y: 1194, width: 165, height: 165 },
+    { x: 3187, y: 1194, width: 165, height: 165 },
+];
+const LAPL_FLOOR_RECT: SheetRect = { x: 0, y: 512, width: 256, height: 256 };
+const LAPL_OBSTACLE_RECT: SheetRect = { x: 0, y: 1536, width: 256, height: 256 };
+const LAPL_MEDKIT_RECT: SheetRect = { x: 0, y: 1280, width: 256, height: 256 };
+const LAPL_AMMO_RECT: SheetRect = { x: 256, y: 1280, width: 256, height: 256 };
+const LAPL_PISTOL_RECT: SheetRect = { x: 768, y: 588, width: 58, height: 117 };
+const LAPL_RIFLE_RECT: SheetRect = { x: 130, y: 576, width: 60, height: 134 };
+const LAPL_SHOTGUN_RECT: SheetRect = { x: 1113, y: 459, width: 68, height: 336 };
+const LAPL_SNIPER_RECT: SheetRect = { x: 1479, y: 445, width: 71, height: 365 };
 
 export class GameScene extends Phaser.Scene {
     private socket: Socket | null = null;
@@ -38,7 +63,7 @@ export class GameScene extends Phaser.Scene {
     private playerLabels: Map<string, Phaser.GameObjects.Text> = new Map();
     private healthBars: Map<string, Phaser.GameObjects.Graphics> = new Map();
     private itemSprites: Map<string, Phaser.GameObjects.Sprite> = new Map();
-    private obstacleRects: Phaser.GameObjects.Rectangle[] = [];
+    private obstacleRects: Phaser.GameObjects.Image[] = [];
 
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
     private wasd!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key };
@@ -55,6 +80,8 @@ export class GameScene extends Phaser.Scene {
 
     private zoneGraphics!: Phaser.GameObjects.Graphics;
     private projectileGraphics!: Phaser.GameObjects.Graphics;
+    private zoneMaskGraphics!: Phaser.GameObjects.Graphics;
+    private outsideZoneOverlay!: Phaser.GameObjects.Rectangle;
     private minimapCamera!: Phaser.Cameras.Scene2D.Camera;
 
     private bloodEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -103,12 +130,9 @@ export class GameScene extends Phaser.Scene {
     }
 
     preload() {
-        this.load.atlasXML('characters', '/assets/spritesheet_characters.png', '/assets/spritesheet_characters.xml');
-        this.load.spritesheet('tiles', '/assets/spritesheet_tiles.png', { frameWidth: 64, frameHeight: 64, spacing: 10 });
-        this.load.image('weapon_pistol', '/assets/weapon_pistol.png');
-        this.load.image('weapon_rifle', '/assets/weapon_rifle.png');
-        this.load.image('weapon_shotgun', '/assets/weapon_shotgun.png');
-        this.load.image('weapon_sniper', '/assets/weapon_sniper.png');
+        this.load.image('laplas_skins_sheet', '/assets/laplas/Skins.png');
+        this.load.image('laplas_weapons_sheet', '/assets/laplas/Weapons.png');
+        this.load.image('laplas_tiles_sheet', '/assets/laplas/Tileset with cell size 256x256.png');
     }
 
     create(): void {
@@ -122,6 +146,7 @@ export class GameScene extends Phaser.Scene {
             .setAlpha(0.82)
             .setBounds(0, 0, GAME_CONFIG.WORLD_WIDTH, GAME_CONFIG.WORLD_HEIGHT);
 
+        this.prepareLaplasTextures();
         this.createBackground();
 
         this.connectionText = this.add.text(width / 2, height / 2, 'Connecting...', { fontSize: '24px', color: '#4ecdc4' })
@@ -191,6 +216,7 @@ export class GameScene extends Phaser.Scene {
             this.controlsText,
             this.inventoryText,
             this.phaseText,
+            this.outsideZoneOverlay,
             this.bloodEmitter,
             this.sparksEmitter,
             this.flashEmitter,
@@ -229,6 +255,7 @@ export class GameScene extends Phaser.Scene {
         this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
             this.scale.off(Phaser.Scale.Events.RESIZE, this.handleResize, this);
             this.unregisterAutomationHooks();
+            this.zoneMaskGraphics?.destroy();
             this.destroyDomOverlays();
         });
 
@@ -237,22 +264,115 @@ export class GameScene extends Phaser.Scene {
     }
 
     private createBackground(): void {
-        this.add.rectangle(
-            GAME_CONFIG.WORLD_WIDTH / 2,
-            GAME_CONFIG.WORLD_HEIGHT / 2,
-            GAME_CONFIG.WORLD_WIDTH,
-            GAME_CONFIG.WORLD_HEIGHT,
-            0x2eaa6f
-        ).setDepth(-5);
+        this.add
+            .tileSprite(
+                GAME_CONFIG.WORLD_WIDTH / 2,
+                GAME_CONFIG.WORLD_HEIGHT / 2,
+                GAME_CONFIG.WORLD_WIDTH,
+                GAME_CONFIG.WORLD_HEIGHT,
+                'laplas_floor'
+            )
+            .setDepth(-5)
+            .setAlpha(0.95);
 
-        this.add.rectangle(
-            GAME_CONFIG.WORLD_WIDTH / 2,
-            GAME_CONFIG.WORLD_HEIGHT / 2,
-            GAME_CONFIG.WORLD_WIDTH,
-            GAME_CONFIG.WORLD_HEIGHT,
-            0x173f35,
-            0.08
-        ).setDepth(-4);
+        this.add
+            .rectangle(
+                GAME_CONFIG.WORLD_WIDTH / 2,
+                GAME_CONFIG.WORLD_HEIGHT / 2,
+                GAME_CONFIG.WORLD_WIDTH,
+                GAME_CONFIG.WORLD_HEIGHT,
+                0x10241e,
+                0.16
+            )
+            .setDepth(-4);
+
+        this.zoneMaskGraphics = this.add.graphics().setVisible(false);
+        const mask = this.zoneMaskGraphics.createGeometryMask();
+        mask.invertAlpha = true;
+
+        this.outsideZoneOverlay = this.add
+            .rectangle(
+                GAME_CONFIG.WORLD_WIDTH / 2,
+                GAME_CONFIG.WORLD_HEIGHT / 2,
+                GAME_CONFIG.WORLD_WIDTH,
+                GAME_CONFIG.WORLD_HEIGHT,
+                0x071015,
+                0.22
+            )
+            .setDepth(-1);
+        this.outsideZoneOverlay.setMask(mask);
+    }
+
+    private createSubTextureFromSheet(sourceKey: string, targetKey: string, rect: SheetRect): void {
+        if (this.textures.exists(targetKey)) {
+            return;
+        }
+
+        const sourceImage = this.textures.get(sourceKey).getSourceImage() as HTMLImageElement | HTMLCanvasElement;
+        const canvas = this.textures.createCanvas(targetKey, rect.width, rect.height);
+        if (!canvas) {
+            return;
+        }
+        const context = canvas.getContext();
+
+        context.clearRect(0, 0, rect.width, rect.height);
+        context.drawImage(
+            sourceImage,
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
+            0,
+            0,
+            rect.width,
+            rect.height
+        );
+        canvas.refresh();
+    }
+
+    private prepareLaplasTextures(): void {
+        LAPL_PLAYER_SKIN_RECTS.forEach((rect, index) => {
+            this.createSubTextureFromSheet('laplas_skins_sheet', `laplas_player_${index}`, rect);
+        });
+
+        this.createSubTextureFromSheet('laplas_tiles_sheet', 'laplas_floor', LAPL_FLOOR_RECT);
+        this.createSubTextureFromSheet('laplas_tiles_sheet', 'laplas_obstacle', LAPL_OBSTACLE_RECT);
+        this.createSubTextureFromSheet('laplas_tiles_sheet', 'laplas_medkit', LAPL_MEDKIT_RECT);
+        this.createSubTextureFromSheet('laplas_tiles_sheet', 'laplas_ammo', LAPL_AMMO_RECT);
+
+        this.createSubTextureFromSheet('laplas_weapons_sheet', 'laplas_weapon_pistol', LAPL_PISTOL_RECT);
+        this.createSubTextureFromSheet('laplas_weapons_sheet', 'laplas_weapon_rifle', LAPL_RIFLE_RECT);
+        this.createSubTextureFromSheet('laplas_weapons_sheet', 'laplas_weapon_shotgun', LAPL_SHOTGUN_RECT);
+        this.createSubTextureFromSheet('laplas_weapons_sheet', 'laplas_weapon_sniper', LAPL_SNIPER_RECT);
+    }
+
+    private scaleSpriteToMaxSize(sprite: Phaser.GameObjects.Sprite, maxSize: number): void {
+        const sourceImage = sprite.texture.getSourceImage() as { width: number; height: number } | undefined;
+        if (!sourceImage || !sourceImage.width || !sourceImage.height) {
+            return;
+        }
+
+        const dimension = Math.max(sourceImage.width, sourceImage.height);
+        sprite.setScale(maxSize / dimension);
+    }
+
+    private getItemTextureKey(itemType: ItemType): string {
+        if (itemType === ItemType.MEDKIT) {
+            return 'laplas_medkit';
+        }
+        if (itemType === ItemType.AMMO) {
+            return 'laplas_ammo';
+        }
+        if (itemType === ItemType.WEAPON_RIFLE) {
+            return 'laplas_weapon_rifle';
+        }
+        if (itemType === ItemType.WEAPON_SHOTGUN) {
+            return 'laplas_weapon_shotgun';
+        }
+        if (itemType === ItemType.WEAPON_SNIPER) {
+            return 'laplas_weapon_sniper';
+        }
+        return 'laplas_weapon_pistol';
     }
 
     private createPixelTexture() {
@@ -718,34 +838,14 @@ export class GameScene extends Phaser.Scene {
         }
 
         this.flashEmitter.explode(5, effect.x, effect.y);
-        const shooter = Array.from(this.playerSprites.values()).find((sprite) =>
-            Phaser.Math.Distance.Between(sprite.x, sprite.y, effect.x, effect.y) < 5
-        );
-        if (shooter) {
-            this.tweens.add({
-                targets: shooter,
-                scale: 0.8,
-                duration: 50,
-                yoyo: true,
-            });
-        }
     }
 
     private getSkinForPlayer(id: string): string {
-        const skins = [
-            'manBlue_gun.png',
-            'manBrown_gun.png',
-            'manOld_gun.png',
-            'robot1_gun.png',
-            'soldier1_gun.png',
-            'survivor1_gun.png',
-            'womanGreen_gun.png',
-        ];
         let hash = 0;
         for (let i = 0; i < id.length; i++) {
             hash = id.charCodeAt(i) + ((hash << 5) - hash);
         }
-        return skins[Math.abs(hash) % skins.length];
+        return `laplas_player_${Math.abs(hash) % LAPL_PLAYER_SKIN_RECTS.length}`;
     }
 
     private createPlayerSprite(player: PlayerState): void {
@@ -754,7 +854,8 @@ export class GameScene extends Phaser.Scene {
         }
 
         const skin = this.getSkinForPlayer(player.id);
-        const sprite = this.add.sprite(player.x, player.y, 'characters', skin).setOrigin(0.5);
+        const sprite = this.add.sprite(player.x, player.y, skin).setOrigin(0.5);
+        this.scaleSpriteToMaxSize(sprite, 34);
         const label = this.add.text(player.x, player.y - 35, this.getLabelText(player), { fontSize: '12px' }).setOrigin(0.5);
         const healthBar = this.add.graphics();
 
@@ -781,14 +882,12 @@ export class GameScene extends Phaser.Scene {
         this.obstacleRects.forEach((rect) => rect.destroy());
         this.obstacleRects = [];
         obstacles.forEach((obstacle) => {
-            const rect = this.add.rectangle(
+            const rect = this.add.image(
                 obstacle.x + obstacle.width / 2,
                 obstacle.y + obstacle.height / 2,
-                obstacle.width,
-                obstacle.height,
-                0xc67d4c
+                'laplas_obstacle'
             );
-            rect.setStrokeStyle(2, 0x8f552f, 0.95);
+            rect.setDisplaySize(obstacle.width, obstacle.height);
             this.obstacleRects.push(rect);
         });
     }
@@ -807,6 +906,10 @@ export class GameScene extends Phaser.Scene {
         } else {
             this.phaseText.setText('');
         }
+
+        this.zoneMaskGraphics.clear();
+        this.zoneMaskGraphics.fillStyle(0xffffff, 1);
+        this.zoneMaskGraphics.fillCircle(state.zone.x, state.zone.y, state.zone.radius);
 
         this.zoneGraphics
             .clear()
@@ -831,24 +934,12 @@ export class GameScene extends Phaser.Scene {
 
             let sprite = this.itemSprites.get(item.id);
             if (!sprite) {
-                let texture = 'weapon_pistol';
-                if (item.type === ItemType.MEDKIT || item.type === ItemType.AMMO) {
-                    texture = 'tiles';
-                }
-
-                sprite = this.add.sprite(item.x, item.y, texture).setOrigin(0.5).setScale(0.5);
-                if (item.type === ItemType.MEDKIT) {
-                    sprite.setFrame(268);
-                } else if (item.type === ItemType.AMMO) {
-                    sprite.setFrame(214);
-                } else if (item.type === ItemType.WEAPON_RIFLE) {
-                    sprite.setTexture('weapon_rifle');
-                } else if (item.type === ItemType.WEAPON_SHOTGUN) {
-                    sprite.setTexture('weapon_shotgun');
-                } else if (item.type === ItemType.WEAPON_SNIPER) {
-                    sprite.setTexture('weapon_sniper');
-                }
-
+                const texture = this.getItemTextureKey(item.type);
+                sprite = this.add.sprite(item.x, item.y, texture).setOrigin(0.5);
+                this.scaleSpriteToMaxSize(
+                    sprite,
+                    item.type === ItemType.MEDKIT || item.type === ItemType.AMMO ? 28 : 38
+                );
                 this.itemSprites.set(item.id, sprite);
             }
 

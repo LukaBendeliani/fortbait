@@ -95,6 +95,24 @@ function findValidSpawn(): { x: number; y: number } {
     return { x: 100, y: 100 };
 }
 
+function findValidItemSpawn(): { x: number; y: number } {
+    const itemSize = GAME_CONFIG.ITEM_SIZE;
+    const halfSize = itemSize / 2;
+    let attempts = 0;
+
+    while (attempts < 80) {
+        const x = halfSize + Math.random() * (GAME_CONFIG.WORLD_WIDTH - itemSize);
+        const y = halfSize + Math.random() * (GAME_CONFIG.WORLD_HEIGHT - itemSize);
+        if (!checkCollision(x, y, itemSize + 12)) {
+            return { x, y };
+        }
+        attempts++;
+    }
+
+    const fallback = findValidSpawn();
+    return { x: fallback.x, y: fallback.y };
+}
+
 function randomColor(): number {
     const colors = [0xff6b6b, 0x4ecdc4, 0x45b7d1, 0xf9ca24, 0x6c5ce7, 0xa29bfe];
     return colors[Math.floor(Math.random() * colors.length)];
@@ -157,12 +175,13 @@ function spawnItems(): void {
         const id = `item_${itemIdCounter++}`;
         const types = [ItemType.MEDKIT, ItemType.AMMO, ItemType.WEAPON_RIFLE, ItemType.WEAPON_SHOTGUN, ItemType.WEAPON_SNIPER];
         const type = types[Math.floor(Math.random() * types.length)];
+        const spawn = findValidItemSpawn();
 
         items.set(id, {
             id,
             type,
-            x: GAME_CONFIG.ITEM_SIZE / 2 + Math.random() * (GAME_CONFIG.WORLD_WIDTH - GAME_CONFIG.ITEM_SIZE),
-            y: GAME_CONFIG.ITEM_SIZE / 2 + Math.random() * (GAME_CONFIG.WORLD_HEIGHT - GAME_CONFIG.ITEM_SIZE),
+            x: spawn.x,
+            y: spawn.y,
         });
     }
 }
