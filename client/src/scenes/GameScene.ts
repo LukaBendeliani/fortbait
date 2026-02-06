@@ -69,7 +69,7 @@ export class GameScene extends Phaser.Scene {
 
     preload() {
         this.load.atlasXML('characters', '/assets/spritesheet_characters.png', '/assets/spritesheet_characters.xml');
-        this.load.spritesheet('tiles', '/assets/spritesheet_tiles.png', { frameWidth: 64, frameHeight: 64 });
+        this.load.spritesheet('tiles', '/assets/spritesheet_tiles.png', { frameWidth: 64, frameHeight: 64, spacing: 10 });
         this.load.image('weapon_pistol', '/assets/weapon_pistol.png');
         this.load.image('weapon_rifle', '/assets/weapon_rifle.png');
         this.load.image('weapon_shotgun', '/assets/weapon_shotgun.png');
@@ -464,9 +464,9 @@ export class GameScene extends Phaser.Scene {
 
                 sprite = this.add.sprite(item.x, item.y, texture).setOrigin(0.5).setScale(0.5);
                 if (item.type === ItemType.MEDKIT) {
-                    sprite.setFrame(84);
+                    sprite.setFrame(268);
                 } else if (item.type === ItemType.AMMO) {
-                    sprite.setFrame(152);
+                    sprite.setFrame(214);
                 } else if (item.type === ItemType.WEAPON_RIFLE) {
                     sprite.setTexture('weapon_rifle');
                 } else if (item.type === ItemType.WEAPON_SHOTGUN) {
